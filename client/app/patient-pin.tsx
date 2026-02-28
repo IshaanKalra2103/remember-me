@@ -20,9 +20,10 @@ const KEY_SIZE = Math.min((width - 120) / 3, 80);
 
 export default function PatientPinScreen() {
   const router = useRouter();
-  const { currentPatient } = useApp();
+  const { currentPatient, verifyPin, createSession } = useApp();
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -35,25 +36,45 @@ export default function PatientPinScreen() {
   }, []);
 
   useEffect(() => {
-    if (pin.length === 4) {
-      if (currentPatient && pin === currentPatient.pin) {
+    if (pin.length === 4 && currentPatient && !isVerifying) {
+      handleVerifyPin();
+    }
+  }, [pin]);
+
+  const handleVerifyPin = async () => {
+    if (!currentPatient) return;
+
+    setIsVerifying(true);
+    try {
+      const isValid = await verifyPin(currentPatient.id, pin);
+      if (isValid) {
         if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Create a session for recognition
+        await createSession();
         setTimeout(() => {
           router.replace('/patient-home');
         }, 200);
       } else {
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setError("That didn't match. Try again.");
-        Animated.sequence([
-          Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-          Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
-          Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
-          Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
-        ]).start();
-        setTimeout(() => setPin(''), 400);
+        showError();
       }
+    } catch (err) {
+      showError();
+    } finally {
+      setIsVerifying(false);
     }
-  }, [pin]);
+  };
+
+  const showError = () => {
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    setError("That didn't match. Try again.");
+    Animated.sequence([
+      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: -10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
+      Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
+    ]).start();
+    setTimeout(() => setPin(''), 400);
+  };
 
   const handleKeyPress = (key: string) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

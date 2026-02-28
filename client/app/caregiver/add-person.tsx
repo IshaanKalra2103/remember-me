@@ -32,7 +32,7 @@ import { relationships } from '@/mocks/data';
 
 export default function AddPersonScreen() {
   const router = useRouter();
-  const { addPerson, currentPatientId } = useApp();
+  const { addPerson, currentPatientId, uploadPhoto } = useApp();
   const [step, setStep] = useState<number>(0);
   const [name, setName] = useState<string>('');
   const [relationship, setRelationship] = useState<string>('');
@@ -41,6 +41,8 @@ export default function AddPersonScreen() {
   const [hasVoiceMessage, setHasVoiceMessage] = useState<boolean>(false);
   const [showRelPicker, setShowRelPicker] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const stepTitles = ['Identity', 'Photos', 'Voice', 'Review'];
@@ -88,22 +90,37 @@ export default function AddPersonScreen() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!currentPatientId) return;
-    const person: Person = {
-      id: `person-${Date.now()}`,
-      patientId: currentPatientId,
-      name: name.trim(),
-      relationship,
-      nickname: nickname.trim() || undefined,
-      photos,
-      hasVoiceMessage,
-      hasAnnouncement: false,
-      createdAt: new Date().toISOString(),
-    };
-    addPerson(person);
-    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    animateTransition(() => setStep(4));
+
+    setIsSubmitting(true);
+    setSubmitError('');
+
+    try {
+      // Create the person first
+      const newPerson = await addPerson({
+        name: name.trim(),
+        relationship,
+        nickname: nickname.trim() || undefined,
+      });
+
+      // Upload photos in sequence
+      for (const photoUri of photos) {
+        try {
+          await uploadPhoto(newPerson.id, photoUri);
+        } catch (err) {
+          console.warn('Failed to upload photo:', err);
+        }
+      }
+
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      animateTransition(() => setStep(4));
+    } catch (err: any) {
+      setSubmitError(err.message || 'Failed to save person');
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const toggleRecord = () => {
@@ -369,18 +386,18 @@ export default function AddPersonScreen() {
           <TouchableOpacity
             style={[
               styles.primaryButton,
-              !canProceed() && styles.buttonDisabled,
+              (!canProceed() || isSubmitting) && styles.buttonDisabled,
               step > 0 && { flex: 1 },
             ]}
             onPress={handleNext}
-            disabled={!canProceed()}
+            disabled={!canProceed() || isSubmitting}
             activeOpacity={0.85}
             testID="next-step"
           >
             <Text style={styles.primaryButtonText}>
-              {step === 3 ? 'Save Person' : 'Continue'}
+              {isSubmitting ? 'Saving...' : step === 3 ? 'Save Person' : 'Continue'}
             </Text>
-            <ChevronRight size={18} color={Colors.white} />
+            {!isSubmitting && <ChevronRight size={18} color={Colors.white} />}
           </TouchableOpacity>
         </View>
       </ScrollView>

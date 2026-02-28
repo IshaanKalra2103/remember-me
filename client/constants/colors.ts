@@ -19,4 +19,5 @@ export default {
   pinDot: '#D4CFC8',
   pinDotFilled: '#5B9A8B',
   cardShadow: 'rgba(45, 52, 54, 0.08)',
+  error: '#E07A5F',
 };

@@ -126,8 +126,9 @@ export default function PatientResultScreen() {
     );
   }
 
-  const relationLabel =
-    person.relationship.charAt(0).toUpperCase() + person.relationship.slice(1);
+  const relationLabel = person.relationship
+    ? person.relationship.charAt(0).toUpperCase() + person.relationship.slice(1)
+    : 'Someone you know';
 
   return (
     <View style={styles.container}>

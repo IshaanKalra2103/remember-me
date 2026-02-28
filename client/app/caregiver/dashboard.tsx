@@ -36,16 +36,34 @@ interface DashboardAction {
 
 export default function CaregiverDashboard() {
   const router = useRouter();
-  const { currentPatient, patients, signOut, currentPeople } = useApp();
+  const { currentPatient, patients, signOut, currentPeople, isSignedIn, isLoading } = useApp();
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    // Redirect to login if not signed in
+    if (!isLoading && !isSignedIn) {
+      router.replace('/login');
+      return;
+    }
+
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 400,
       useNativeDriver: true,
     }).start();
-  }, []);
+  }, [isSignedIn, isLoading]);
+
+  if (isLoading || !isSignedIn) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <Text style={{ color: Colors.textSecondary }}>Loading...</Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   const actions: DashboardAction[] = [
     {

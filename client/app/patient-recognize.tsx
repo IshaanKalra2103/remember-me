@@ -19,7 +19,7 @@ const { width, height } = Dimensions.get('window');
 
 export default function PatientRecognizeScreen() {
   const router = useRouter();
-  const { currentPeople, addActivityLogEntry, currentPatientId, setLastRecognition } = useApp();
+  const { currentPeople, addActivityLogEntry, currentPatientId, setLastRecognition, submitFrame } = useApp();
   const [isIdentifying, setIsIdentifying] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
@@ -67,20 +67,36 @@ export default function PatientRecognizeScreen() {
       );
       pulseAnimation.start();
 
-      const timer = setTimeout(() => {
-        if (currentPeople.length > 0) {
-          const randomPerson =
-            currentPeople[Math.floor(Math.random() * currentPeople.length)];
-          const isConfident = Math.random() > 0.3;
+      // Call recognition API
+      performRecognition();
 
-          setLastRecognition(randomPerson);
+      return () => {
+        scanAnimation.stop();
+        pulseAnimation.stop();
+      };
+    }
+  }, [isIdentifying]);
+
+  const performRecognition = async () => {
+    try {
+      // Use a placeholder image for now (in real app, would use camera capture)
+      const result = await submitFrame('placeholder://test-frame.jpg');
+
+      if (!result) {
+        router.replace('/patient-not-sure');
+        return;
+      }
+
+      if (result.status === 'identified' && result.winnerPersonId) {
+        const person = currentPeople.find(p => p.id === result.winnerPersonId);
+        if (person) {
+          setLastRecognition(person);
 
           if (currentPatientId) {
             addActivityLogEntry({
-              patientId: currentPatientId,
               type: 'identified',
-              personName: randomPerson.name,
-              confidence: isConfident ? 'high' : 'low',
+              personName: person.name,
+              confidence: result.confidenceScore,
             });
           }
 
@@ -89,22 +105,46 @@ export default function PatientRecognizeScreen() {
           router.replace({
             pathname: '/patient-result',
             params: {
-              personId: randomPerson.id,
-              confident: isConfident ? 'true' : 'false',
+              personId: person.id,
+              confident: result.confidenceBand === 'high' ? 'true' : 'false',
             },
           });
         } else {
           router.replace('/patient-not-sure');
         }
-      }, 2500);
-
-      return () => {
-        clearTimeout(timer);
-        scanAnimation.stop();
-        pulseAnimation.stop();
-      };
+      } else if (result.status === 'unsure' && result.needsTieBreak) {
+        // TODO: Handle tiebreak flow
+        if (result.candidates.length > 0) {
+          const topCandidate = result.candidates[0];
+          const person = currentPeople.find(p => p.id === topCandidate.personId);
+          if (person) {
+            setLastRecognition(person);
+            router.replace({
+              pathname: '/patient-result',
+              params: {
+                personId: person.id,
+                confident: 'false',
+              },
+            });
+          } else {
+            router.replace('/patient-not-sure');
+          }
+        } else {
+          router.replace('/patient-not-sure');
+        }
+      } else {
+        if (currentPatientId) {
+          addActivityLogEntry({
+            type: 'unsure',
+          });
+        }
+        router.replace('/patient-not-sure');
+      }
+    } catch (error) {
+      console.error('Recognition error:', error);
+      router.replace('/patient-not-sure');
     }
-  }, [isIdentifying]);
+  };
 
   const handleIdentify = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

@@ -20,15 +20,17 @@ import { Patient } from '@/types';
 
 export default function AddPatientScreen() {
   const router = useRouter();
-  const { addPatient } = useApp();
+  const { addPatient, setPin: savePin, updatePatient } = useApp();
   const [step, setStep] = useState<number>(0);
   const [name, setName] = useState<string>('');
-  const [language, setLanguage] = useState<string>('English');
+  const [language, setLanguage] = useState<string>('en');
   const [pin, setPin] = useState<string>('');
   const [confirmPin, setConfirmPin] = useState<string>('');
   const [supervisionMode, setSupervisionMode] = useState<boolean>(true);
   const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
   const [pinError, setPinError] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [createdPatientId, setCreatedPatientId] = useState<string | null>(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const steps = [
@@ -45,7 +47,7 @@ export default function AddPatientScreen() {
     setTimeout(callback, 150);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (step === 1) {
       if (pin.length !== 4) {
@@ -61,18 +63,26 @@ export default function AddPatientScreen() {
     if (step < 2) {
       animateTransition(() => setStep(step + 1));
     } else {
-      const newPatient: Patient = {
-        id: `patient-${Date.now()}`,
-        name: name.trim(),
-        language,
-        pin,
-        supervisionMode,
-        autoPlayAudio,
-        createdAt: new Date().toISOString(),
-      };
-      addPatient(newPatient);
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      animateTransition(() => setStep(3));
+      setIsSubmitting(true);
+      try {
+        // Create patient
+        const newPatient = await addPatient({ name: name.trim(), language });
+        setCreatedPatientId(newPatient.id);
+
+        // Set PIN
+        await savePin(newPatient.id, pin);
+
+        // Update supervision mode and auto-play audio
+        await updatePatient(newPatient.id, { supervisionMode, autoPlayAudio });
+
+        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        animateTransition(() => setStep(3));
+      } catch (error: any) {
+        setPinError(error.message || 'Failed to create patient');
+        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      } finally {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -268,16 +278,16 @@ export default function AddPatientScreen() {
         </Animated.View>
 
         <TouchableOpacity
-          style={[styles.primaryButton, !canProceed() && styles.buttonDisabled]}
+          style={[styles.primaryButton, (!canProceed() || isSubmitting) && styles.buttonDisabled]}
           onPress={handleNext}
-          disabled={!canProceed()}
+          disabled={!canProceed() || isSubmitting}
           activeOpacity={0.85}
           testID="next-button"
         >
           <Text style={styles.primaryButtonText}>
-            {step === 2 ? 'Create Patient' : 'Continue'}
+            {isSubmitting ? 'Creating...' : step === 2 ? 'Create Patient' : 'Continue'}
           </Text>
-          <ChevronRight size={18} color={Colors.white} />
+          {!isSubmitting && <ChevronRight size={18} color={Colors.white} />}
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

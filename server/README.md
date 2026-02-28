@@ -99,8 +99,8 @@ Two areas are intentionally stubbed for future AI integration:
 - Planned: Real-time frame processing with GPU acceleration
 
 **Audio Generation** (`audio.py`)
-- Current: Uploads empty placeholder files
-- Future: OpenAI TTS API to generate "This is {name}, your {relationship}" audio
+- Current: Uses ElevenLabs TTS to generate "This is {name}, your {relationship}" audio
+- Caches output in `announcement-audio` bucket by text hash
 - Planned: Voice cloning from uploaded caregiver clips for personalized announcements
 
 ## Prerequisites
@@ -119,11 +119,14 @@ uv sync
 
 ### 2. Environment Variables
 
-The `.env` file is already configured with the Supabase project credentials:
+The `.env` file should include:
 
 ```
 SUPABASE_URL=https://lzuznpfxmqvxqtybycgb.supabase.co
 SUPABASE_KEY=<anon-key>
+ELEVENLABS_API_KEY=<your-elevenlabs-api-key>
+ELEVENLABS_VOICE_ID=<optional-voice-id>
+ELEVENLABS_MODEL_ID=<optional-model-id>
 ```
 
 ### 3. Database
@@ -228,7 +231,7 @@ All endpoints are prefixed with `/v1`
 
 | Method | Endpoint | Description | Auth Required |
 |--------|----------|-------------|---------------|
-| POST | `/v1/people/{id}/announcement-audio` | Generate announcement audio (stub) | Yes |
+| POST | `/v1/people/{id}/announcement-audio` | Generate announcement audio | Yes |
 
 ### Activity Logs
 
@@ -350,7 +353,7 @@ server/
 
 ### Stubs
 - **Recognition**: Returns random candidates from enrolled people
-- **Audio generation**: Creates placeholder files (integrate OpenAI TTS later)
+- **Audio generation**: Uses ElevenLabs TTS and caches generated audio in storage
 
 ## Development Notes
 
@@ -374,7 +377,7 @@ app.add_middleware(
 ## Next Steps
 
 1. **Recognition Pipeline**: Replace stub in `recognition.py` with actual face detection + embedding matching
-2. **Audio Generation**: Integrate OpenAI TTS in `audio.py`
+2. **Audio Generation**: Add custom voice cloning + personalized voice profile controls
 3. **Email Delivery**: Add email provider (SendGrid, Resend, etc.) to `auth.py`
 4. **Rate Limiting**: Add rate limiting middleware
 5. **Error Tracking**: Integrate Sentry or similar
