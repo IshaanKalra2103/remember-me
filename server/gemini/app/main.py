@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import validate_config
-from app.routers import register, recognize
+from app.routers import register, recognize, sessions, stranger
 from app.services.profile_store import ProfileStore
 
 
@@ -38,6 +38,8 @@ app.add_middleware(
 
 app.include_router(register.router)
 app.include_router(recognize.router)
+app.include_router(sessions.router)
+app.include_router(stranger.router)
 
 
 @app.get("/health", tags=["Health"])

@@ -71,3 +71,32 @@ class ProfileStore:
             if p.profile_id == profile_id:
                 return p
         return None
+
+    @staticmethod
+    def add_memory(profile_id: str, memory_string: str) -> bool:
+        """Append a dated memory string to a profile's memories list.
+
+        Enforces the 20-item cap by dropping the oldest entry when full.
+        The entire read-mutate-write is done within a single lock acquisition
+        to avoid TOCTOU race conditions.
+
+        Args:
+            profile_id:    The profile to update.
+            memory_string: Pre-formatted string, e.g. "2026-02-28: Talked about gardening".
+
+        Returns:
+            True if the profile was found and updated.
+            False if no profile with that ID exists.
+        """
+        with _lock:
+            raw = ProfileStore._load_raw()
+            for entry in raw:
+                if entry["profile_id"] == profile_id:
+                    memories = entry.get("memories", [])
+                    if len(memories) >= 20:
+                        memories = memories[1:]  # drop oldest
+                    memories.append(memory_string)
+                    entry["memories"] = memories
+                    ProfileStore._save_raw(raw)
+                    return True
+        return False
