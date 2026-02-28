@@ -1,0 +1,11 @@
+.env
+data/profiles.json
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
