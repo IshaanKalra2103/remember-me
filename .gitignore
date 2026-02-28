@@ -1,1 +1,7 @@
+# Virtual Environment Files
 .env
+.venv
+
+# Other Files
+plan
+

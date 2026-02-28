@@ -2,8 +2,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
+import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { AppProvider } from "@/providers/AppProvider";
+import { AppProvider, useApp } from "@/providers/AppProvider";
+import MainLoader from "@/components/MainLoader";
 import Colors from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -34,6 +36,20 @@ function RootLayoutNav() {
   );
 }
 
+function AppBootstrap() {
+  const { isLoading } = useApp();
+
+  if (isLoading) {
+    return (
+      <View style={styles.loaderContainer}>
+        <MainLoader />
+      </View>
+    );
+  }
+
+  return <RootLayoutNav />;
+}
+
 export default function RootLayout() {
   useEffect(() => {
     SplashScreen.hideAsync();
@@ -41,11 +57,23 @@ export default function RootLayout() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView>
+      <GestureHandlerRootView style={styles.root}>
         <AppProvider>
-          <RootLayoutNav />
+          <AppBootstrap />
         </AppProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  loaderContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+  },
+});
