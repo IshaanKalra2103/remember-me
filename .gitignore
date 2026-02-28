@@ -2,6 +2,9 @@
 .env
 .venv
 
+# Python Cache
+__pycache__/
+*.pyc
+
 # Other Files
 plan
-
