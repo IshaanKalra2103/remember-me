@@ -35,7 +35,7 @@ export interface ActivityLogEntry {
   patientId: string;
   type: 'identified' | 'unsure' | 'not_correct' | 'audio_played' | 'help_requested';
   personName?: string;
-  confidence?: 'high' | 'low';
+  confidence?: 'high' | 'medium' | 'low';
   timestamp: string;
   note?: string;
 }

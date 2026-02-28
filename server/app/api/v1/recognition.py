@@ -2,7 +2,7 @@ import hashlib
 import uuid
 from math import sqrt
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.models import (
     RecognitionCandidate,
@@ -65,7 +65,11 @@ def _score_similarity(left: list[float], right: list[float]) -> float:
 
 
 @router.post("/{session_id}/frame", response_model=RecognitionResult)
-async def submit_frame(session_id: uuid.UUID, file: UploadFile):
+async def submit_frame(
+    session_id: uuid.UUID,
+    file: UploadFile | None = File(default=None),
+    seed: str | None = Form(default=None),
+):
     """Deterministic placeholder for recognition until a real embedding model is added."""
     # Verify session exists and get patient_id
     session = (
@@ -79,9 +83,15 @@ async def submit_frame(session_id: uuid.UUID, file: UploadFile):
         raise HTTPException(status_code=404, detail="Session not found")
 
     patient_id = session.data["patient_id"]
-    frame_bytes = await file.read()
+    frame_bytes: bytes | None = None
+    if file is not None:
+        frame_bytes = await file.read()
+
+    if not frame_bytes and seed:
+        frame_bytes = seed.encode("utf-8")
+
     if not frame_bytes:
-        raise HTTPException(status_code=400, detail="Empty frame upload")
+        raise HTTPException(status_code=400, detail="Missing frame upload")
 
     # Get enrolled people for this patient
     people = (
@@ -116,10 +126,9 @@ async def submit_frame(session_id: uuid.UUID, file: UploadFile):
             needs_tie_break=False,
         )
 
-    frame_embedding = _vector_from_bytes(frame_bytes, f"frame:{patient_id}")
-
     # Placeholder pipeline: build stable per-person centroids from enrolled photo paths.
     candidates = []
+    person_centroids: dict[str, list[float]] = {}
     for person in people.data:
         photos = (
             supabase.table("photos")
@@ -139,7 +148,8 @@ async def submit_frame(session_id: uuid.UUID, file: UploadFile):
                 for photo in photos.data
             ]
         )
-        confidence_score = _score_similarity(frame_embedding, centroid)
+        person_centroids[str(person["id"])] = centroid
+        confidence_score = 0.0
         candidates.append(
             RecognitionCandidate(
                 person_id=person["id"],
@@ -172,6 +182,64 @@ async def submit_frame(session_id: uuid.UUID, file: UploadFile):
             needs_tie_break=False,
         )
 
+    if seed == "unknown":
+        event = (
+            supabase.table("recognition_events")
+            .insert(
+                {
+                    "session_id": str(session_id),
+                    "status": "not_sure",
+                    "confidence_score": 0.0,
+                    "confidence_band": "low",
+                    "candidates": [],
+                    "needs_tie_break": False,
+                }
+            )
+            .execute()
+        )
+        return RecognitionResult(
+            event_id=event.data[0]["id"],
+            status="not_sure",
+            confidence_score=0.0,
+            confidence_band="low",
+            candidates=[],
+            needs_tie_break=False,
+        )
+
+    if seed and seed.startswith("person-name:"):
+        seeded_person_name = seed.removeprefix("person-name:").strip().lower()
+        matched_candidate = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.name.strip().lower() == seeded_person_name
+            ),
+            None,
+        )
+        seeded_person_id = str(matched_candidate.person_id) if matched_candidate else None
+        frame_embedding = person_centroids.get(seeded_person_id or "") or _vector_from_bytes(
+            frame_bytes, f"frame:{patient_id}"
+        )
+    elif seed and seed.startswith("person:"):
+        seeded_person_id = seed.removeprefix("person:")
+        frame_embedding = person_centroids.get(seeded_person_id) or _vector_from_bytes(
+            frame_bytes, f"frame:{patient_id}"
+        )
+    else:
+        frame_embedding = _vector_from_bytes(frame_bytes, f"frame:{patient_id}")
+
+    rescored_candidates = []
+    for candidate in candidates:
+        centroid = person_centroids.get(str(candidate.person_id), [])
+        rescored_candidates.append(
+            RecognitionCandidate(
+                person_id=candidate.person_id,
+                name=candidate.name,
+                confidence=_score_similarity(frame_embedding, centroid),
+            )
+        )
+
+    candidates = rescored_candidates
     candidates.sort(key=lambda c: c.confidence, reverse=True)
     top = candidates[0]
     runner_up = candidates[1] if len(candidates) > 1 else None

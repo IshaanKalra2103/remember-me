@@ -157,8 +157,8 @@ async def update_preferences(
 
 
 @router.post("/{patient_id}/sessions", response_model=SessionOut, status_code=201)
-async def create_session(patient_id: uuid.UUID, caregiver=Depends(get_current_caregiver)):
-    _verify_ownership(str(patient_id), caregiver["id"])
+async def create_session(patient_id: uuid.UUID):
+    """Patient-mode route: session creation is allowed without caregiver auth."""
     result = (
         supabase.table("sessions")
         .insert({"patient_id": str(patient_id)})
