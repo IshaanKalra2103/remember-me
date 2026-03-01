@@ -7,12 +7,20 @@ server never crashes if Gemini is down or the API key is missing.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import html
 from dataclasses import dataclass, field
 
 from google import genai
 from google.genai import types as genai_types
 
-from app.config import GEMINI_API_KEY, GEMINI_MODEL
+from app.config import (
+    GEMINI_API_KEY,
+    GEMINI_FALLBACK_MODELS,
+    GEMINI_IMAGE_MODEL,
+    GEMINI_MODEL,
+)
 
 _client: genai.Client | None = None
 
@@ -42,25 +50,40 @@ class PersonContext:
 async def _generate(prompt: str, temperature: float = 0.5) -> str:
     """Call Gemini and return text. Raises on failure (callers handle fallback)."""
     client = _get_client()
-    response = await client.aio.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=genai_types.GenerateContentConfig(
-            temperature=temperature,
-        ),
-    )
-    text = response.text
-    if not text:
-        # Thinking models can return None for response.text — extract from parts
+    candidates: list[str] = []
+    for model in [GEMINI_MODEL, *GEMINI_FALLBACK_MODELS]:
+        if model and model not in candidates:
+            candidates.append(model)
+
+    last_error: Exception | None = None
+    for model in candidates:
         try:
-            text = "".join(
-                p.text for p in response.candidates[0].content.parts if p.text
+            response = await client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=temperature,
+                ),
             )
-        except Exception:
-            pass
-    if not text:
-        raise ValueError("Gemini returned an empty response")
-    return text.strip()
+            text = response.text
+            if not text:
+                # Thinking models can return None for response.text — extract from parts
+                try:
+                    text = "".join(
+                        p.text for p in response.candidates[0].content.parts if p.text
+                    )
+                except Exception:
+                    pass
+            if text:
+                return text.strip()
+            raise ValueError(f"Gemini returned an empty response for model={model}")
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("No Gemini models configured")
 
 
 # ---------------------------------------------------------------------------
@@ -339,3 +362,100 @@ async def recall_memory(
     except Exception:
         m = matching_memories[0]
         return f"You and {m.person_name} had a conversation on {m.date}. {m.summary or ''}"
+
+
+_MEMORY_IMAGE_PROMPT_TEMPLATE = (
+    "Create a warm, clean, storybook-style illustration that visually represents this memory.\n"
+    "Memory details:\n"
+    "- Person: {person_name}\n"
+    "- Date context: {date}\n"
+    "- Summary: {summary}\n"
+    "- Importance: {importance}\n\n"
+    "Art direction:\n"
+    "- Gentle, uplifting, memory-journal aesthetic\n"
+    "- Soft lighting and clear focal subject\n"
+    "- No text, no logos, no watermarks\n"
+    "- Family-friendly realistic illustration\n"
+    "- Subtle Nano Banana Pro-style cinematic composition\n"
+)
+
+
+def _memory_svg_fallback_data_uri(
+    summary: str,
+    person_name: str,
+    date: str,
+    is_important: bool,
+) -> str:
+    seed = hashlib.sha256(f"{person_name}|{date}|{summary}".encode("utf-8")).hexdigest()
+    start = f"#{seed[:6]}"
+    end = f"#{seed[6:12]}"
+    badge = "#E07A5F" if is_important else "#5B9A8B"
+    name = html.escape((person_name or "Someone")[:22])
+    date_text = html.escape((date or "Unknown date")[:22])
+    summary_text = html.escape((summary or "A meaningful conversation.")[:120])
+
+    svg = f"""
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="{start}"/>
+      <stop offset="100%" stop-color="{end}"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="36" fill="url(#bg)"/>
+  <circle cx="84" cy="76" r="16" fill="{badge}"/>
+  <rect x="40" y="120" width="432" height="308" rx="22" fill="rgba(255,255,255,0.88)"/>
+  <text x="62" y="172" font-size="30" font-family="Arial, sans-serif" fill="#2D3436" font-weight="700">{name}</text>
+  <text x="62" y="210" font-size="20" font-family="Arial, sans-serif" fill="#6B7280">{date_text}</text>
+  <foreignObject x="62" y="236" width="388" height="176">
+    <div xmlns="http://www.w3.org/1999/xhtml" style="font-size:20px;line-height:1.35;color:#2D3436;font-family:Arial,sans-serif;">
+      {summary_text}
+    </div>
+  </foreignObject>
+</svg>
+""".strip()
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+async def generate_memory_image_data_uri(
+    summary: str,
+    person_name: str,
+    date: str,
+    is_important: bool,
+) -> str:
+    """Generate a contextual memory image as a data URI. Falls back to SVG art."""
+    safe_summary = (summary or "").strip() or "A meaningful shared moment."
+    prompt = _MEMORY_IMAGE_PROMPT_TEMPLATE.format(
+        person_name=person_name or "someone",
+        date=date or "unknown date",
+        summary=safe_summary[:300],
+        importance="important" if is_important else "normal",
+    )
+
+    try:
+        client = _get_client()
+        response = await client.aio.models.generate_images(
+            model=GEMINI_IMAGE_MODEL,
+            prompt=prompt,
+            config=genai_types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="1:1",
+                output_mime_type="image/png",
+            ),
+        )
+        if response.generated_images and response.generated_images[0].image:
+            image = response.generated_images[0].image
+            if image.image_bytes:
+                mime_type = image.mime_type or "image/png"
+                encoded = base64.b64encode(image.image_bytes).decode("ascii")
+                return f"data:{mime_type};base64,{encoded}"
+    except Exception as e:
+        print(f"[MEMORY IMAGE] Gemini image generation failed, using fallback: {e}")
+
+    return _memory_svg_fallback_data_uri(
+        summary=safe_summary,
+        person_name=person_name,
+        date=date,
+        is_important=is_important,
+    )

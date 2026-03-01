@@ -218,3 +218,43 @@ class ActivityLogOut(CamelModel):
     confidence: Optional[float] = None
     note: Optional[str] = None
     timestamp: datetime
+
+
+# ── ElevenLabs Memory Agent ───────────────────────────────────────────
+
+
+class MemoryAgentConfigResponse(CamelModel):
+    patient_id: uuid.UUID
+    agent_id: str
+    websocket_url: str
+    signed_url: Optional[str] = None
+    conversation_token: Optional[str] = None
+    warnings: Optional[list[str]] = None
+    person_name: Optional[str] = None
+    context_text: str
+    memories_count: int
+
+
+class NameBridgeState(CamelModel):
+    name: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class NameBridgeValue(CamelModel):
+    name: Optional[str] = None
+
+
+class NameBridgeSetRequest(CamelModel):
+    name: str
+
+
+class NameBridgeCommandRequest(CamelModel):
+    command: str
+    name: Optional[str] = None
+
+
+class NameBridgeCommandResponse(CamelModel):
+    accepted: bool
+    reason: Optional[str] = None
+    name: Optional[str] = None
+    updated_at: Optional[str] = None

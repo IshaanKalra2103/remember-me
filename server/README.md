@@ -74,6 +74,10 @@ OPENAI_TRANSCRIBE_MODEL=<optional-model-id> # default: gpt-4o-transcribe-diarize
 ELEVENLABS_API_KEY=<your-elevenlabs-api-key>
 ELEVENLABS_VOICE_ID=<optional-voice-id>      # default: XrExE9yKIg1WjnnlVkGX
 ELEVENLABS_MODEL_ID=<optional-model-id>      # default: eleven_flash_v2_5
+GEMINI_API_KEY=<your-gemini-api-key>
+GEMINI_MODEL=<optional-model-id>             # default: gemini-2.5-flash-lite
+GEMINI_FALLBACK_MODELS=<comma-separated>     # default: gemini-2.5-flash
+GEMINI_IMAGE_MODEL=<optional-model-id>       # default: imagen-4.0-generate-001
 ```
 
 ## Setup and Run

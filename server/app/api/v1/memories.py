@@ -6,6 +6,7 @@ to identify which speaker is the patient based on their stored voice embedding.
 """
 
 import uuid
+import base64
 from pathlib import Path
 
 import assemblyai as aai
@@ -15,6 +16,7 @@ from app.config import ASSEMBLYAI_API_KEY, SUPABASE_URL
 from app.gemini_service import (
     PersonContext,
     evaluate_importance,
+    generate_memory_image_data_uri,
     summarize_transcript,
     update_profile_bio,
 )
@@ -24,6 +26,7 @@ from app.titanet import embedding_from_pgvector, identify_speakers
 router = APIRouter(tags=["memories"])
 
 MEMORY_AUDIO_BUCKET = "memory-audio"
+MEMORY_IMAGE_PREFIX = "memory-images"
 
 # Configure AssemblyAI
 if ASSEMBLYAI_API_KEY:
@@ -40,10 +43,10 @@ def _normalize_supabase_url(url: str) -> str:
     return f"{SUPABASE_URL}/{url}"
 
 
-def _resolve_audio_url(storage_path: str) -> str:
-    """Get a signed URL for the audio file."""
+def _resolve_storage_url(bucket: str, storage_path: str) -> str:
+    """Get a signed/public URL for a storage object."""
     try:
-        signed = supabase.storage.from_(MEMORY_AUDIO_BUCKET).create_signed_url(
+        signed = supabase.storage.from_(bucket).create_signed_url(
             storage_path,
             60 * 60 * 24,  # 24 hours
         )
@@ -59,7 +62,7 @@ def _resolve_audio_url(storage_path: str) -> str:
     except Exception:
         pass
 
-    public_url = supabase.storage.from_(MEMORY_AUDIO_BUCKET).get_public_url(storage_path)
+    public_url = supabase.storage.from_(bucket).get_public_url(storage_path)
     if isinstance(public_url, str):
         return public_url
 
@@ -73,7 +76,12 @@ def _resolve_audio_url(storage_path: str) -> str:
                 if isinstance(data.get(key), str):
                     return _normalize_supabase_url(data[key])
 
-    raise HTTPException(status_code=502, detail="Failed to resolve memory audio URL")
+    raise HTTPException(status_code=502, detail="Failed to resolve storage URL")
+
+
+def _resolve_audio_url(storage_path: str) -> str:
+    """Get a signed/public URL for memory audio in storage."""
+    return _resolve_storage_url(MEMORY_AUDIO_BUCKET, storage_path)
 
 
 def _upload_audio(patient_id: uuid.UUID, audio_bytes: bytes, filename: str, mime_type: str) -> str:
@@ -94,6 +102,56 @@ def _upload_audio(patient_id: uuid.UUID, audio_bytes: bytes, filename: str, mime
         ) from exc
 
     return _resolve_audio_url(storage_path)
+
+
+def _custom_image_storage_path(memory_id: str) -> str:
+    return f"{MEMORY_IMAGE_PREFIX}/{memory_id}/latest"
+
+
+def _decode_data_uri(data_uri: str) -> tuple[str, bytes]:
+    if not data_uri.startswith("data:"):
+        raise ValueError("Invalid data URI")
+    header, encoded = data_uri.split(",", 1)
+    mime_type = "application/octet-stream"
+    if ";" in header:
+        mime_type = header[5:].split(";", 1)[0] or mime_type
+    if ";base64" not in header:
+        raise ValueError("Data URI must be base64-encoded")
+    return mime_type, base64.b64decode(encoded)
+
+
+def _upload_custom_memory_image(memory_id: str, data_uri: str) -> str:
+    mime_type, image_bytes = _decode_data_uri(data_uri)
+    storage_path = _custom_image_storage_path(memory_id)
+
+    try:
+        supabase.storage.from_(MEMORY_AUDIO_BUCKET).upload(
+            storage_path,
+            image_bytes,
+            {"content-type": mime_type},
+        )
+    except Exception as exc:
+        error_text = str(exc)
+        if "Duplicate" in error_text or "already exists" in error_text:
+            try:
+                supabase.storage.from_(MEMORY_AUDIO_BUCKET).remove([storage_path])
+                supabase.storage.from_(MEMORY_AUDIO_BUCKET).upload(
+                    storage_path,
+                    image_bytes,
+                    {"content-type": mime_type},
+                )
+            except Exception as retry_exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to persist custom memory image after retry: {retry_exc}",
+                ) from retry_exc
+        else:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to persist custom memory image: {exc}",
+            ) from exc
+
+    return _resolve_storage_url(MEMORY_AUDIO_BUCKET, storage_path)
 
 
 def _get_patient_embedding(patient_id: uuid.UUID) -> list[float] | None:
@@ -138,6 +196,8 @@ def _transcribe_with_assemblyai(
             speaker_labels=True,
             speakers_expected=2,  # Usually patient + visitor
             language_detection=True,
+            # Required by the current AssemblyAI API when language_detection is enabled.
+            speech_models=["universal-2"],
         )
 
         # Transcribe the audio
@@ -303,10 +363,24 @@ async def create_memory(  # noqa: RUF029 — async needed for Gemini awaits
                 if is_important:
                     new_bio = await update_profile_bio(current_bio, summary, person_ctx)
                     if new_bio != current_bio:
-                        supabase.table("people").update({"bio": new_bio}).eq(
-                            "id", str(parsed_person_id)
-                        ).execute()
-                        print(f"[MEMORY] Bio updated for {person_name}")
+                        try:
+                            (
+                                supabase.table("people")
+                                .update({"bio": new_bio})
+                                .eq("id", str(parsed_person_id))
+                                .select("id")
+                                .maybe_single()
+                                .execute()
+                            )
+                            print(f"[MEMORY] Bio updated for {person_name}")
+                        except Exception as bio_update_error:
+                            # Some PostgREST client versions throw on 204/no-body updates.
+                            if "Missing response" in str(bio_update_error):
+                                print(
+                                    "[MEMORY] Bio update returned no content; continuing"
+                                )
+                            else:
+                                raise
 
                 print(f"[MEMORY] Summary: {summary}")
                 print(f"[MEMORY] Important: {is_important}")
@@ -339,7 +413,20 @@ async def list_memories(patient_id: uuid.UUID, limit: int = 20, offset: int = 0)
         .range(offset, offset + limit - 1)
         .execute()
     )
-    return result.data
+    rows = result.data or []
+    for row in rows:
+        memory_id = row.get("id")
+        if not memory_id:
+            row["custom_image_url"] = None
+            continue
+        try:
+            row["custom_image_url"] = _resolve_storage_url(
+                MEMORY_AUDIO_BUCKET,
+                _custom_image_storage_path(str(memory_id)),
+            )
+        except Exception:
+            row["custom_image_url"] = None
+    return rows
 
 
 @router.get("/patient-mode/memories/{memory_id}")
@@ -355,3 +442,33 @@ async def get_memory(memory_id: uuid.UUID):
     if not result.data:
         raise HTTPException(status_code=404, detail="Memory not found")
     return result.data
+
+
+@router.post("/patient-mode/memories/{memory_id}/custom-image")
+async def generate_memory_custom_image(memory_id: uuid.UUID):
+    """Generate a custom contextual image for a memory (on-demand)."""
+    result = (
+        supabase.table("memories")
+        .select("id, person_name, summary, transcription, created_at, is_important")
+        .eq("id", str(memory_id))
+        .maybe_single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    memory = result.data
+    date_value = str(memory.get("created_at") or "")[:10] or "unknown-date"
+    summary = memory.get("summary") or memory.get("transcription") or "A meaningful memory."
+
+    data_uri = await generate_memory_image_data_uri(
+        summary=summary,
+        person_name=memory.get("person_name") or "someone",
+        date=date_value,
+        is_important=bool(memory.get("is_important")),
+    )
+    image_url = _upload_custom_memory_image(str(memory_id), data_uri)
+    return {
+        "memory_id": str(memory_id),
+        "image_url": image_url,
+    }

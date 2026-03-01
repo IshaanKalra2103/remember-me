@@ -4,6 +4,7 @@ import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { ElevenLabsProvider } from "@elevenlabs/react-native";
 import { AppProvider, useApp } from "@/providers/AppProvider";
 import MainLoader from "@/components/MainLoader";
 import Colors from "@/constants/colors";
@@ -28,6 +29,7 @@ function RootLayoutNav() {
       <Stack.Screen name="caregiver" options={{ headerShown: false }} />
       <Stack.Screen name="patient-home" options={{ headerShown: false }} />
       <Stack.Screen name="patient-recognize" options={{ headerShown: false }} />
+      <Stack.Screen name="patient-memory-agent" options={{ headerShown: false }} />
       <Stack.Screen name="patient-result" options={{ headerShown: false }} />
       <Stack.Screen name="patient-not-sure" options={{ headerShown: false }} />
       <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'About Privacy' }} />
@@ -57,9 +59,11 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={styles.root}>
-        <AppProvider>
-          <AppBootstrap />
-        </AppProvider>
+        <ElevenLabsProvider>
+          <AppProvider>
+            <AppBootstrap />
+          </AppProvider>
+        </ElevenLabsProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
   );
