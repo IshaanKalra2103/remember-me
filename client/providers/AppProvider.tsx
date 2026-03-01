@@ -2,12 +2,21 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
+import { Image } from 'expo-image';
 import {
   Patient,
   Person,
   ActivityLogEntry,
   RecognitionPreferences,
 } from '@/types';
+import {
+  createLog,
+  fetchLogs,
+  fetchPatient,
+  fetchPeople,
+  fetchPreferences,
+} from '@/utils/backendApi';
+import { getRecognitionPatientId } from '@/utils/recognitionApi';
 import {
   defaultPreferences,
   samplePatients,
@@ -42,7 +51,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
   const dataQuery = useQuery({
     queryKey: ['appData'],
     queryFn: async () => {
-      console.log('[AppProvider] Loading data from storage...');
+      console.log('[AppProvider] Loading data from storage/backend...');
       const [
         storedPatients,
         storedPeople,
@@ -64,6 +73,39 @@ export const [AppProvider, useApp] = createContextHook(() => {
         AsyncStorage.getItem(STORAGE_KEYS.hasSeenWelcome),
         AsyncStorage.getItem(STORAGE_KEYS.lastRecognition),
       ]);
+
+      const configuredPatientId = getRecognitionPatientId(storedCurrentPatient || null);
+      if (configuredPatientId) {
+        try {
+          const [patient, people, prefs, logs] = await Promise.all([
+            fetchPatient(configuredPatientId),
+            fetchPeople(configuredPatientId),
+            fetchPreferences(configuredPatientId),
+            fetchLogs(configuredPatientId),
+          ]);
+
+          const photoUrls = people.flatMap((person) =>
+            person.photos.map((photo) => photo.url)
+          );
+          await Promise.all(photoUrls.map((url) => Image.prefetch(url)));
+
+          return {
+            patients: [patient],
+            people,
+            activityLog: logs,
+            preferences: prefs,
+            currentPatientId: patient.id,
+            isSignedIn: storedSignedIn === 'true',
+            caregiverEmail: storedEmail || null,
+            hasSeenWelcome: storedWelcome === 'true',
+            lastRecognizedPerson: storedLastRecognition
+              ? JSON.parse(storedLastRecognition)
+              : null,
+          };
+        } catch (error) {
+          console.warn('[AppProvider] Backend load failed, falling back to storage.', error);
+        }
+      }
 
       return {
         patients: storedPatients ? JSON.parse(storedPatients) : samplePatients,
@@ -99,6 +141,25 @@ export const [AppProvider, useApp] = createContextHook(() => {
       await Promise.all(entries.map(([key, value]) => AsyncStorage.setItem(key, value)));
     },
   });
+
+  useEffect(() => {
+    if (!dataQuery.data) {
+      return;
+    }
+    saveMutation.mutate({
+      [STORAGE_KEYS.patients]: JSON.stringify(dataQuery.data.patients),
+      [STORAGE_KEYS.people]: JSON.stringify(dataQuery.data.people),
+      [STORAGE_KEYS.activityLog]: JSON.stringify(dataQuery.data.activityLog),
+      [STORAGE_KEYS.preferences]: JSON.stringify(dataQuery.data.preferences),
+      [STORAGE_KEYS.currentPatientId]: dataQuery.data.currentPatientId ?? '',
+      [STORAGE_KEYS.isSignedIn]: dataQuery.data.isSignedIn ? 'true' : 'false',
+      [STORAGE_KEYS.caregiverEmail]: dataQuery.data.caregiverEmail ?? '',
+      [STORAGE_KEYS.hasSeenWelcome]: dataQuery.data.hasSeenWelcome ? 'true' : 'false',
+      [STORAGE_KEYS.lastRecognition]: dataQuery.data.lastRecognizedPerson
+        ? JSON.stringify(dataQuery.data.lastRecognizedPerson)
+        : '',
+    });
+  }, [dataQuery.data, saveMutation]);
 
   const currentPatient = useMemo(
     () => patients.find((p) => p.id === currentPatientId) ?? null,
@@ -213,8 +274,25 @@ export const [AppProvider, useApp] = createContextHook(() => {
       const updated = [newEntry, ...activityLog];
       setActivityLog(updated);
       saveMutation.mutate({ [STORAGE_KEYS.activityLog]: JSON.stringify(updated) });
+
+      if (currentPatientId) {
+        createLog(currentPatientId, entry)
+          .then((saved) => {
+            setActivityLog((prev) => {
+              const filtered = prev.filter((log) => log.id !== newEntry.id);
+              const merged = [saved, ...filtered];
+              saveMutation.mutate({
+                [STORAGE_KEYS.activityLog]: JSON.stringify(merged),
+              });
+              return merged;
+            });
+          })
+          .catch((error) => {
+            console.warn('[AppProvider] Failed to sync log:', error);
+          });
+      }
     },
-    [activityLog, saveMutation]
+    [activityLog, currentPatientId, saveMutation]
   );
 
   const updatePreferences = useCallback(

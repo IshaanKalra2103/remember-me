@@ -1,10 +1,16 @@
 import hashlib
 import uuid
 from math import sqrt
+from typing import Optional
 
+import cv2
+import insightface
+import numpy as np
+import requests
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.models import (
+    BoundingBox,
     RecognitionCandidate,
     RecognitionEventOut,
     RecognitionResult,
@@ -15,6 +21,13 @@ from app.supabase_client import supabase
 router = APIRouter(prefix="/sessions", tags=["recognition"])
 
 VECTOR_SIZE = 24
+HIGH_CONFIDENCE_SIMILARITY = 0.6
+MEDIUM_CONFIDENCE_SIMILARITY = 0.45
+
+PHOTO_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
+
+FACE_APP = insightface.app.FaceAnalysis(name="buffalo_l")
+FACE_APP.prepare(ctx_id=0, det_size=(640, 640))
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -43,25 +56,79 @@ def _vector_from_text(seed: str, salt: str) -> list[float]:
     return _vector_from_bytes(seed.encode("utf-8"), salt)
 
 
-def _average(vectors: list[list[float]]) -> list[float]:
+def _average(vectors: list[np.ndarray]) -> Optional[np.ndarray]:
     if not vectors:
-        return []
-
-    total = [0.0] * len(vectors[0])
-    for vector in vectors:
-        for index, value in enumerate(vector):
-            total[index] += value
-
-    return _normalize([value / len(vectors) for value in total])
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    return sum(left[index] * right[index] for index in range(min(len(left), len(right))))
+        return None
+    stacked = np.vstack(vectors)
+    mean = np.mean(stacked, axis=0)
+    norm = np.linalg.norm(mean)
+    if norm == 0:
+        return None
+    return mean / norm
 
 
-def _score_similarity(left: list[float], right: list[float]) -> float:
+def _cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
+    return float(np.dot(left, right))
+
+
+def _score_similarity(left: np.ndarray, right: np.ndarray) -> float:
     raw_score = _cosine_similarity(left, right)
     return round(max(0.0, min(0.99, (raw_score + 1) / 2)), 2)
+
+
+def _load_image_from_bytes(payload: bytes) -> Optional[np.ndarray]:
+    buffer = np.frombuffer(payload, dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    return image
+
+
+def _largest_face(faces):
+    if not faces:
+        return None
+    return max(
+        faces,
+        key=lambda face: (face.bbox[2] - face.bbox[0]) * (face.bbox[3] - face.bbox[1]),
+    )
+
+
+def _compute_embedding(image: np.ndarray) -> Optional[np.ndarray]:
+    faces = FACE_APP.get(image)
+    face = _largest_face(faces)
+    if not face:
+        return None
+    embedding = face.embedding
+    norm = np.linalg.norm(embedding)
+    if norm == 0:
+        return None
+    return embedding / norm
+
+
+def _fetch_photo_embedding(photo: dict) -> Optional[np.ndarray]:
+    cache_key = str(photo.get("id") or photo.get("storage_path") or photo.get("url"))
+    if cache_key in PHOTO_EMBEDDING_CACHE:
+        return PHOTO_EMBEDDING_CACHE[cache_key]
+
+    url = photo.get("url")
+    if not url:
+        return None
+
+    try:
+        response = requests.get(url, timeout=15)
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+
+    image = _load_image_from_bytes(response.content)
+    if image is None:
+        return None
+
+    embedding = _compute_embedding(image)
+    if embedding is None:
+        return None
+
+    PHOTO_EMBEDDING_CACHE[cache_key] = embedding
+    return embedding
 
 
 @router.post("/{session_id}/frame", response_model=RecognitionResult)
@@ -70,8 +137,7 @@ async def submit_frame(
     file: UploadFile | None = File(default=None),
     seed: str | None = Form(default=None),
 ):
-    """Deterministic placeholder for recognition until a real embedding model is added."""
-    # Verify session exists and get patient_id
+    """Recognition pipeline using InsightFace embeddings."""
     session = (
         supabase.table("sessions")
         .select("*")
@@ -93,7 +159,6 @@ async def submit_frame(
     if not frame_bytes:
         raise HTTPException(status_code=400, detail="Missing frame upload")
 
-    # Get enrolled people for this patient
     people = (
         supabase.table("people")
         .select("id, name")
@@ -102,7 +167,6 @@ async def submit_frame(
     )
 
     if not people.data:
-        # No enrolled people — return not_sure
         event = (
             supabase.table("recognition_events")
             .insert(
@@ -126,9 +190,45 @@ async def submit_frame(
             needs_tie_break=False,
         )
 
-    # Placeholder pipeline: build stable per-person centroids from enrolled photo paths.
-    candidates = []
-    person_centroids: dict[str, list[float]] = {}
+    frame_image = _load_image_from_bytes(frame_bytes)
+    primary_face = None
+    if frame_image is not None:
+        faces = FACE_APP.get(frame_image)
+        primary_face = _largest_face(faces)
+
+    if primary_face is None:
+        event = (
+            supabase.table("recognition_events")
+            .insert(
+                {
+                    "session_id": str(session_id),
+                    "status": "not_sure",
+                    "confidence_score": 0.0,
+                    "confidence_band": "low",
+                    "candidates": [],
+                    "needs_tie_break": False,
+                }
+            )
+            .execute()
+        )
+        return RecognitionResult(
+            event_id=event.data[0]["id"],
+            status="not_sure",
+            confidence_score=0.0,
+            confidence_band="low",
+            candidates=[],
+            needs_tie_break=False,
+        )
+
+    primary_embedding = primary_face.embedding
+    norm = np.linalg.norm(primary_embedding)
+    if norm == 0:
+        primary_embedding = None
+    else:
+        primary_embedding = primary_embedding / norm
+
+    candidates: list[RecognitionCandidate] = []
+    person_centroids: dict[str, np.ndarray] = {}
     for person in people.data:
         photos = (
             supabase.table("photos")
@@ -139,26 +239,26 @@ async def submit_frame(
         if not photos.data:
             continue
 
-        centroid = _average(
-            [
-                _vector_from_text(
-                    photo["storage_path"] or photo["url"] or photo["id"],
-                    f"person:{person['id']}",
-                )
-                for photo in photos.data
-            ]
-        )
+        embeddings = []
+        for photo in photos.data:
+            embedding = _fetch_photo_embedding(photo)
+            if embedding is not None:
+                embeddings.append(embedding)
+
+        centroid = _average(embeddings)
+        if centroid is None:
+            continue
+
         person_centroids[str(person["id"])] = centroid
-        confidence_score = 0.0
         candidates.append(
             RecognitionCandidate(
                 person_id=person["id"],
                 name=person["name"],
-                confidence=confidence_score,
+                confidence=0.0,
             )
         )
 
-    if not candidates:
+    if not candidates or primary_embedding is None:
         event = (
             supabase.table("recognition_events")
             .insert(
@@ -181,76 +281,30 @@ async def submit_frame(
             candidates=[],
             needs_tie_break=False,
         )
-
-    if seed == "unknown":
-        event = (
-            supabase.table("recognition_events")
-            .insert(
-                {
-                    "session_id": str(session_id),
-                    "status": "not_sure",
-                    "confidence_score": 0.0,
-                    "confidence_band": "low",
-                    "candidates": [],
-                    "needs_tie_break": False,
-                }
-            )
-            .execute()
-        )
-        return RecognitionResult(
-            event_id=event.data[0]["id"],
-            status="not_sure",
-            confidence_score=0.0,
-            confidence_band="low",
-            candidates=[],
-            needs_tie_break=False,
-        )
-
-    if seed and seed.startswith("person-name:"):
-        seeded_person_name = seed.removeprefix("person-name:").strip().lower()
-        matched_candidate = next(
-            (
-                candidate
-                for candidate in candidates
-                if candidate.name.strip().lower() == seeded_person_name
-            ),
-            None,
-        )
-        seeded_person_id = str(matched_candidate.person_id) if matched_candidate else None
-        frame_embedding = person_centroids.get(seeded_person_id or "") or _vector_from_bytes(
-            frame_bytes, f"frame:{patient_id}"
-        )
-    elif seed and seed.startswith("person:"):
-        seeded_person_id = seed.removeprefix("person:")
-        frame_embedding = person_centroids.get(seeded_person_id) or _vector_from_bytes(
-            frame_bytes, f"frame:{patient_id}"
-        )
-    else:
-        frame_embedding = _vector_from_bytes(frame_bytes, f"frame:{patient_id}")
 
     rescored_candidates = []
     for candidate in candidates:
-        centroid = person_centroids.get(str(candidate.person_id), [])
+        centroid = person_centroids.get(str(candidate.person_id))
+        if centroid is None:
+            continue
         rescored_candidates.append(
             RecognitionCandidate(
                 person_id=candidate.person_id,
                 name=candidate.name,
-                confidence=_score_similarity(frame_embedding, centroid),
+                confidence=_score_similarity(primary_embedding, centroid),
             )
         )
 
-    candidates = rescored_candidates
-    candidates.sort(key=lambda c: c.confidence, reverse=True)
+    candidates = sorted(rescored_candidates, key=lambda c: c.confidence, reverse=True)
     top = candidates[0]
     runner_up = candidates[1] if len(candidates) > 1 else None
     score_gap = round(top.confidence - runner_up.confidence, 2) if runner_up else top.confidence
 
-    # Determine status based on confidence and separation.
-    if top.confidence >= 0.85 and score_gap >= 0.08:
+    if top.confidence >= HIGH_CONFIDENCE_SIMILARITY and score_gap >= 0.08:
         status = "identified"
         band = "high"
         needs_tie_break = False
-    elif top.confidence >= 0.6:
+    elif top.confidence >= MEDIUM_CONFIDENCE_SIMILARITY:
         status = "unsure"
         band = "medium"
         needs_tie_break = len(candidates) > 1
@@ -277,12 +331,17 @@ async def submit_frame(
         .execute()
     )
 
+    x1, y1, x2, y2 = [int(value) for value in primary_face.bbox]
+    bbox = BoundingBox(x=x1, y=y1, w=max(0, x2 - x1), h=max(0, y2 - y1))
+
     return RecognitionResult(
         event_id=event.data[0]["id"],
         status=status,
         confidence_score=top.confidence,
         confidence_band=band,
         winner_person_id=winner_id,
+        recognized_name=top.name,
+        primary_bbox=bbox,
         candidates=candidates,
         needs_tie_break=needs_tie_break,
     )
@@ -290,7 +349,6 @@ async def submit_frame(
 
 @router.post("/{session_id}/tiebreak", response_model=RecognitionResult)
 async def tiebreak(session_id: uuid.UUID, body: TiebreakRequest):
-    # Find the latest event for this session that needs a tiebreak
     event = (
         supabase.table("recognition_events")
         .select("*")
@@ -304,7 +362,6 @@ async def tiebreak(session_id: uuid.UUID, body: TiebreakRequest):
     if not event.data:
         raise HTTPException(status_code=404, detail="No tiebreak event found")
 
-    # Update the event
     updated = (
         supabase.table("recognition_events")
         .update(
@@ -325,9 +382,7 @@ async def tiebreak(session_id: uuid.UUID, body: TiebreakRequest):
         confidence_score=updated.data[0]["confidence_score"],
         confidence_band="high",
         winner_person_id=body.selected_person_id,
-        candidates=[
-            RecognitionCandidate(**c) for c in updated.data[0]["candidates"]
-        ],
+        candidates=[RecognitionCandidate(**c) for c in updated.data[0]["candidates"]],
         needs_tie_break=False,
     )
 

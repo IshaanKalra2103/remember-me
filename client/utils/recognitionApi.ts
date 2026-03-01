@@ -15,6 +15,8 @@ export interface RecognitionApiResult {
   confidenceScore: number | null;
   confidenceBand: ConfidenceBand | null;
   winnerPersonId?: string | null;
+  recognizedName?: string | null;
+  primaryBbox?: { x: number; y: number; w: number; h: number } | null;
   candidates: RecognitionApiCandidate[];
   needsTieBreak: boolean;
 }
@@ -49,6 +51,28 @@ export async function createRecognitionSession(patientId: string) {
 export async function submitRecognitionSeed(sessionId: string, seed: string) {
   const body = new FormData();
   body.append('seed', seed);
+
+  const response = await fetch(`${getApiBaseUrl()}/sessions/${sessionId}/frame`, {
+    method: 'POST',
+    body,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Recognition failed (${response.status}): ${detail}`);
+  }
+
+  const data = await response.json();
+  return data as RecognitionApiResult;
+}
+
+export async function submitRecognitionFrame(sessionId: string, uri: string) {
+  const body = new FormData();
+  body.append('file', {
+    uri,
+    name: 'frame.jpg',
+    type: 'image/jpeg',
+  } as unknown as Blob);
 
   const response = await fetch(`${getApiBaseUrl()}/sessions/${sessionId}/frame`, {
     method: 'POST',

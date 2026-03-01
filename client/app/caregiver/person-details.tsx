@@ -91,9 +91,9 @@ export default function PersonDetailsScreen() {
           </Text>
         </View>
         <View style={styles.photoGrid}>
-          {person.photos.map((uri, index) => (
-            <View key={index} style={styles.photoItem}>
-              <Image source={{ uri }} style={styles.photoImage} />
+          {person.photos.map((photo, index) => (
+            <View key={photo.id ?? index} style={styles.photoItem}>
+              <Image source={{ uri: photo.url }} style={styles.photoImage} />
             </View>
           ))}
         </View>

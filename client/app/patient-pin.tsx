@@ -14,6 +14,7 @@ import { Delete, Lock } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
+import { verifyPatientPin } from '@/utils/backendApi';
 
 const { width } = Dimensions.get('window');
 const KEY_SIZE = Math.min((width - 120) / 3, 80);
@@ -35,14 +36,26 @@ export default function PatientPinScreen() {
   }, []);
 
   useEffect(() => {
-    if (pin.length === 4) {
-      if (currentPatient && pin === currentPatient.pin) {
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (pin.length !== 4) {
+      return;
+    }
+
+    const runVerify = async () => {
+      if (!currentPatient) {
+        setError('No patient selected.');
+        return;
+      }
+
+      const valid = await verifyPatientPin(currentPatient.id, pin);
+      if (valid) {
+        if (Platform.OS !== 'web')
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setTimeout(() => {
           router.replace('/patient-home');
         }, 200);
       } else {
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        if (Platform.OS !== 'web')
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setError("That didn't match. Try again.");
         Animated.sequence([
           Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
@@ -52,8 +65,14 @@ export default function PatientPinScreen() {
         ]).start();
         setTimeout(() => setPin(''), 400);
       }
-    }
-  }, [pin]);
+    };
+
+    runVerify().catch((error) => {
+      console.error('[PatientPin] PIN verify failed:', error);
+      setError('PIN verification failed.');
+      setTimeout(() => setPin(''), 400);
+    });
+  }, [currentPatient, pin, router, shakeAnim]);
 
   const handleKeyPress = (key: string) => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

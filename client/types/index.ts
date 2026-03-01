@@ -3,9 +3,16 @@ export interface Patient {
   name: string;
   language: string;
   avatarUrl?: string;
-  pin: string;
   supervisionMode: boolean;
   autoPlayAudio: boolean;
+  createdAt: string;
+}
+
+export interface Photo {
+  id: string;
+  personId: string;
+  storagePath: string;
+  url: string;
   createdAt: string;
 }
 
@@ -15,7 +22,7 @@ export interface Person {
   name: string;
   relationship: string;
   nickname?: string;
-  photos: string[];
+  photos: Photo[];
   hasVoiceMessage: boolean;
   hasAnnouncement: boolean;
   createdAt: string;
@@ -35,7 +42,7 @@ export interface ActivityLogEntry {
   patientId: string;
   type: 'identified' | 'unsure' | 'not_correct' | 'audio_played' | 'help_requested';
   personName?: string;
-  confidence?: 'high' | 'medium' | 'low';
+  confidence?: 'high' | 'medium' | 'low' | number;
   timestamp: string;
   note?: string;
 }

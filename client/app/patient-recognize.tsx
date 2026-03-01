@@ -7,57 +7,47 @@ import {
   Animated,
   Platform,
   Dimensions,
+  LayoutChangeEvent,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Camera, RefreshCw, Scan, UserRound } from 'lucide-react-native';
+import { ArrowLeft, Scan, ShieldCheck, ShieldAlert } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { LinearGradient } from 'expo-linear-gradient';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import {
   createRecognitionSession,
   getRecognitionPatientId,
-  submitRecognitionSeed,
+  submitRecognitionFrame,
 } from '@/utils/recognitionApi';
 
-const { width } = Dimensions.get('window');
+const { height: screenHeight } = Dimensions.get('window');
 
-interface SimulatedSubject {
-  key: string;
-  personId: string | null;
-  label: string;
-  subtitle: string;
-}
+type BBox = { x: number; y: number; w: number; h: number };
+
+type OverlayBox = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
 
 export default function PatientRecognizeScreen() {
   const router = useRouter();
   const { currentPeople, addActivityLogEntry, currentPatientId, setLastRecognition } = useApp();
   const [isIdentifying, setIsIdentifying] = useState<boolean>(false);
-  const [selectedSubjectIndex, setSelectedSubjectIndex] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [bbox, setBbox] = useState<OverlayBox | null>(null);
+  const [recognizedName, setRecognizedName] = useState<string | null>(null);
+  const [confidenceBand, setConfidenceBand] = useState<'high' | 'medium' | 'low' | null>(null);
+  const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
   const scanLineAnim = useRef(new Animated.Value(0)).current;
-
-  const simulatedSubjects = useMemo<SimulatedSubject[]>(
-    () => [
-      ...currentPeople.map((person) => ({
-        key: person.id,
-        personId: person.id,
-        label: person.name,
-        subtitle: `Demo face: ${person.relationship}`,
-      })),
-      {
-        key: 'unknown',
-        personId: null,
-        label: 'Unknown visitor',
-        subtitle: 'Forces the not sure path',
-      },
-    ],
-    [currentPeople]
-  );
-
-  const selectedSubject = simulatedSubjects[selectedSubjectIndex] ?? simulatedSubjects[0];
+  const previewLayout = useRef<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -68,16 +58,6 @@ export default function PatientRecognizeScreen() {
   }, [fadeAnim]);
 
   useEffect(() => {
-    setSelectedSubjectIndex((currentIndex) => {
-      if (!simulatedSubjects.length) {
-        return 0;
-      }
-
-      return currentIndex >= simulatedSubjects.length ? 0 : currentIndex;
-    });
-  }, [simulatedSubjects.length]);
-
-  useEffect(() => {
     if (!isIdentifying) {
       return undefined;
     }
@@ -86,12 +66,12 @@ export default function PatientRecognizeScreen() {
       Animated.sequence([
         Animated.timing(scanLineAnim, {
           toValue: 1,
-          duration: 1500,
+          duration: 1400,
           useNativeDriver: true,
         }),
         Animated.timing(scanLineAnim, {
           toValue: 0,
-          duration: 1500,
+          duration: 1400,
           useNativeDriver: true,
         }),
       ])
@@ -114,18 +94,87 @@ export default function PatientRecognizeScreen() {
     );
     pulseAnimation.start();
 
-    const runRecognition = async () => {
-      const patientId = getRecognitionPatientId(currentPatientId);
+    return () => {
+      scanAnimation.stop();
+      pulseAnimation.stop();
+    };
+  }, [isIdentifying, pulseAnim, scanLineAnim]);
 
+  const getOverlayBox = (photoWidth: number, photoHeight: number, box: BBox) => {
+    const layout = previewLayout.current;
+    if (!layout) {
+      return null;
+    }
+
+    const scale = Math.max(layout.width / photoWidth, layout.height / photoHeight);
+    const displayWidth = photoWidth * scale;
+    const displayHeight = photoHeight * scale;
+    const offsetX = (layout.width - displayWidth) / 2;
+    const offsetY = (layout.height - displayHeight) / 2;
+
+    return {
+      left: box.x * scale + offsetX,
+      top: box.y * scale + offsetY,
+      width: box.w * scale,
+      height: box.h * scale,
+    };
+  };
+
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    previewLayout.current = { width, height };
+  };
+
+  const handleIdentify = async () => {
+    if (!currentPeople.length) {
+      router.replace('/patient-not-sure');
+      return;
+    }
+
+    if (!permission?.granted) {
+      const next = await requestPermission();
+      if (!next.granted) {
+        setErrorMessage('Camera permission is required.');
+        return;
+      }
+    }
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    setErrorMessage(null);
+    setIsIdentifying(true);
+    setBbox(null);
+    setRecognizedName(null);
+    setConfidenceBand(null);
+
+    try {
+      const patientId = getRecognitionPatientId(currentPatientId);
       if (!patientId) {
         throw new Error('Set EXPO_PUBLIC_PATIENT_ID or create a real patient first.');
       }
 
       const session = await createRecognitionSession(patientId);
-      const seed = selectedSubject?.personId
-        ? `person-name:${selectedSubject.label}`
-        : 'unknown';
-      const result = await submitRecognitionSeed(session.id, seed);
+      const photo = await cameraRef.current?.takePictureAsync({
+        quality: 0.5,
+        skipProcessing: true,
+      });
+
+      if (!photo?.uri || !photo.width || !photo.height) {
+        throw new Error('Camera capture failed.');
+      }
+
+      const result = await submitRecognitionFrame(session.id, photo.uri);
+      const overlay = result.primaryBbox
+        ? getOverlayBox(photo.width, photo.height, result.primaryBbox)
+        : null;
+
+      if (overlay) {
+        setBbox(overlay);
+      }
+      setRecognizedName(result.recognizedName ?? null);
+      setConfidenceBand(result.confidenceBand ?? null);
 
       const topCandidate = result.candidates[0];
       const resolvedPerson =
@@ -133,12 +182,8 @@ export default function PatientRecognizeScreen() {
           currentPeople.find((person) => person.id === result.winnerPersonId)) ||
         (topCandidate &&
           currentPeople.find(
-            (person) =>
-              person.id === topCandidate.personId || person.name === topCandidate.name
+            (person) => person.id === topCandidate.personId || person.name === topCandidate.name
           )) ||
-        (selectedSubject?.personId
-          ? currentPeople.find((person) => person.id === selectedSubject.personId)
-          : null) ||
         null;
 
       if (result.status === 'not_sure' || !resolvedPerson) {
@@ -148,12 +193,12 @@ export default function PatientRecognizeScreen() {
           addActivityLogEntry({
             patientId: currentPatientId,
             type: 'unsure',
-            confidence: 'low',
+            confidence: result.confidenceScore ?? undefined,
             note: 'Backend returned not sure',
           });
         }
 
-        router.replace('/patient-not-sure');
+        setTimeout(() => router.replace('/patient-not-sure'), 600);
         return;
       }
 
@@ -164,87 +209,69 @@ export default function PatientRecognizeScreen() {
           patientId: currentPatientId,
           type: 'identified',
           personName: resolvedPerson.name,
-          confidence: result.confidenceBand ?? 'medium',
+          confidence: result.confidenceScore ?? undefined,
           note: `Backend status: ${result.status}`,
         });
       }
 
-      router.replace({
-        pathname: '/patient-result',
-        params: {
-          personId: resolvedPerson.id,
-          confidenceBand: result.confidenceBand ?? 'medium',
-        },
-      });
-    };
-
-    runRecognition()
-      .catch((error) => {
-        console.error('[PatientRecognize] Recognition error:', error);
-        setErrorMessage(error instanceof Error ? error.message : 'Recognition failed');
-        setLastRecognition(null);
-      })
-      .finally(() => {
-        setIsIdentifying(false);
-      });
-
-    return () => {
-      scanAnimation.stop();
-      pulseAnimation.stop();
-    };
-  }, [
-    addActivityLogEntry,
-    currentPatientId,
-    currentPeople,
-    isIdentifying,
-    pulseAnim,
-    router,
-    scanLineAnim,
-    selectedSubject?.personId,
-    selectedSubject?.key,
-    setLastRecognition,
-  ]);
-
-  const handleIdentify = () => {
-    if (!currentPeople.length) {
-      router.replace('/patient-not-sure');
-      return;
+      setTimeout(() => {
+        router.replace({
+          pathname: '/patient-result',
+          params: {
+            personId: resolvedPerson.id,
+            confidenceBand: result.confidenceBand ?? 'medium',
+          },
+        });
+      }, 600);
+    } catch (error) {
+      console.error('[PatientRecognize] Recognition error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Recognition failed');
+      setLastRecognition(null);
+    } finally {
+      setIsIdentifying(false);
     }
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-
-    setErrorMessage(null);
-    setIsIdentifying(true);
   };
 
-  const handleCycleSubject = () => {
-    if (!simulatedSubjects.length || isIdentifying) {
-      return;
-    }
+  const overlayColor = useMemo(() => {
+    if (confidenceBand === 'high') return '#2ecc71';
+    if (confidenceBand === 'medium') return '#f5c542';
+    if (confidenceBand === 'low') return '#f06265';
+    return 'rgba(255,255,255,0.5)';
+  }, [confidenceBand]);
 
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
-
-    setErrorMessage(null);
-    setSelectedSubjectIndex((currentIndex) => (currentIndex + 1) % simulatedSubjects.length);
-  };
+  if (!permission?.granted) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.permissionContainer}>
+          <Text style={styles.permissionTitle}>Camera Access Needed</Text>
+          <Text style={styles.permissionText}>
+            To recognize people in front of you, we need camera access.
+          </Text>
+          <TouchableOpacity
+            style={styles.permissionButton}
+            onPress={() => requestPermission()}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.permissionButtonText}>Enable Camera</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <View style={styles.cameraPlaceholder}>
-        <View style={styles.previewAvatar}>
-          <UserRound size={56} color="rgba(255,255,255,0.75)" />
-        </View>
-        <Text style={styles.previewName}>{selectedSubject?.label ?? 'No one enrolled'}</Text>
-        <Text style={styles.cameraPlaceholderText}>
-          {selectedSubject?.subtitle ?? 'Add people in caregiver mode first'}
-        </Text>
-      </View>
+      <CameraView
+        ref={cameraRef}
+        style={styles.camera}
+        facing="front"
+        onLayout={handleLayout}
+      />
 
-      <View style={styles.overlay}>
+      <LinearGradient
+        colors={['rgba(5,8,18,0.65)', 'rgba(5,8,18,0.1)', 'rgba(5,8,18,0.8)']}
+        style={styles.overlay}
+      >
         <SafeAreaView style={styles.safeArea}>
           <Animated.View style={[styles.content, { opacity: fadeAnim }]}>
             <View style={styles.headerRow}>
@@ -256,28 +283,37 @@ export default function PatientRecognizeScreen() {
                 <ArrowLeft size={24} color={Colors.white} />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.switchButton}
-                onPress={handleCycleSubject}
-                disabled={isIdentifying}
-                activeOpacity={0.85}
-                testID="cycle-subject"
-              >
-                <RefreshCw size={16} color={Colors.white} />
-                <Text style={styles.switchButtonText}>Switch Face</Text>
-              </TouchableOpacity>
+              <View style={styles.headerBadge}>
+                {confidenceBand === 'high' ? (
+                  <ShieldCheck size={16} color={overlayColor} />
+                ) : (
+                  <ShieldAlert size={16} color={overlayColor} />
+                )}
+                <Text style={styles.headerBadgeText}>Live Recognition</Text>
+              </View>
             </View>
 
             <View style={styles.frameContainer}>
-              <View style={styles.frameCornerTL} />
-              <View style={styles.frameCornerTR} />
-              <View style={styles.frameCornerBL} />
-              <View style={styles.frameCornerBR} />
-
-              <View style={styles.subjectBadge}>
-                <Camera size={14} color={Colors.white} />
-                <Text style={styles.subjectBadgeText}>{selectedSubject?.label}</Text>
-              </View>
+              {bbox && (
+                <View
+                  style={[
+                    styles.boundingBox,
+                    {
+                      left: bbox.left,
+                      top: bbox.top,
+                      width: bbox.width,
+                      height: bbox.height,
+                      borderColor: overlayColor,
+                    },
+                  ]}
+                >
+                  {recognizedName && (
+                    <View style={[styles.namePill, { borderColor: overlayColor }]}> 
+                      <Text style={styles.nameText}>{recognizedName}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
 
               {isIdentifying && (
                 <Animated.View
@@ -288,7 +324,7 @@ export default function PatientRecognizeScreen() {
                         {
                           translateY: scanLineAnim.interpolate({
                             inputRange: [0, 1],
-                            outputRange: [0, 200],
+                            outputRange: [0, screenHeight * 0.4],
                           }),
                         },
                       ],
@@ -302,15 +338,13 @@ export default function PatientRecognizeScreen() {
               {isIdentifying ? (
                 <View style={styles.identifyingContainer}>
                   <Animated.View style={[styles.identifyingDot, { opacity: pulseAnim }]} />
-                  <Text style={styles.identifyingText}>Sending to backend...</Text>
-                  <Text style={styles.identifyingSubtext}>
-                    Creating a session and running placeholder recognition
-                  </Text>
+                  <Text style={styles.identifyingText}>Analyzing live frame...</Text>
+                  <Text style={styles.identifyingSubtext}>Securing a match in the cloud</Text>
                 </View>
               ) : (
                 <>
                   <Text style={styles.helperText}>
-                    Demo mode: choose a face, then call the backend recognition endpoint.
+                    Hold the camera steady and tap identify to recognize the closest face.
                   </Text>
                   {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
                   <TouchableOpacity
@@ -327,7 +361,7 @@ export default function PatientRecognizeScreen() {
             </View>
           </Animated.View>
         </SafeAreaView>
-      </View>
+      </LinearGradient>
     </View>
   );
 }
@@ -335,36 +369,10 @@ export default function PatientRecognizeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#070a14',
   },
-  cameraPlaceholder: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#1a1a2e',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 24,
-  },
-  previewAvatar: {
-    width: 124,
-    height: 124,
-    borderRadius: 62,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  previewName: {
-    fontSize: 28,
-    fontWeight: '700' as const,
-    color: Colors.white,
-    textAlign: 'center',
-  },
-  cameraPlaceholderText: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.55)',
-    textAlign: 'center',
+  camera: {
+    flex: 1,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -386,102 +394,63 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  switchButton: {
+  headerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.3)',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(5,8,18,0.6)',
   },
-  switchButtonText: {
+  headerBadgeText: {
     color: Colors.white,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600' as const,
   },
   frameContainer: {
     flex: 1,
-    marginHorizontal: 50,
-    marginVertical: 40,
-    maxHeight: 260,
-    alignSelf: 'center',
-    width: width - 100,
+    marginHorizontal: 16,
+    marginVertical: 20,
     position: 'relative',
   },
-  frameCornerTL: {
+  boundingBox: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 40,
-    height: 40,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: 'rgba(255,255,255,0.6)',
-    borderTopLeftRadius: 16,
-  },
-  frameCornerTR: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    width: 40,
-    height: 40,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderColor: 'rgba(255,255,255,0.6)',
-    borderTopRightRadius: 16,
-  },
-  frameCornerBL: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    width: 40,
-    height: 40,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderColor: 'rgba(255,255,255,0.6)',
-    borderBottomLeftRadius: 16,
-  },
-  frameCornerBR: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 40,
-    height: 40,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderColor: 'rgba(255,255,255,0.6)',
-    borderBottomRightRadius: 16,
-  },
-  subjectBadge: {
-    alignSelf: 'center',
-    marginTop: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.28)',
+    borderWidth: 2,
     borderRadius: 18,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
   },
-  subjectBadgeText: {
+  namePill: {
+    position: 'absolute',
+    top: -30,
+    left: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(5,8,18,0.8)',
+    borderWidth: 1,
+  },
+  nameText: {
     color: Colors.white,
     fontSize: 14,
     fontWeight: '600' as const,
   },
   scanLine: {
     position: 'absolute',
-    left: 10,
-    right: 10,
+    left: 0,
+    right: 0,
     height: 2,
     backgroundColor: Colors.accent,
     shadowColor: Colors.accent,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
+    shadowOpacity: 0.7,
     shadowRadius: 8,
   },
   bottomArea: {
@@ -521,24 +490,48 @@ const styles = StyleSheet.create({
   identifyingContainer: {
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 20,
   },
   identifyingDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: Colors.accent,
-    marginBottom: 4,
   },
   identifyingText: {
+    color: Colors.white,
+    fontSize: 16,
+    fontWeight: '600' as const,
+  },
+  identifyingSubtext: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+  },
+  permissionContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  permissionTitle: {
     fontSize: 22,
     fontWeight: '700' as const,
     color: Colors.white,
-    textAlign: 'center',
+    marginBottom: 12,
   },
-  identifyingSubtext: {
+  permissionText: {
     fontSize: 15,
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.7)',
     textAlign: 'center',
+    marginBottom: 20,
+  },
+  permissionButton: {
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  permissionButtonText: {
+    color: Colors.white,
+    fontWeight: '600' as const,
   },
 });

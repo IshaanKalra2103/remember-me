@@ -56,7 +56,7 @@ export default function AddPersonScreen() {
   const handlePickPhoto = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaType.Images,
         allowsMultipleSelection: true,
         quality: 0.8,
       });
@@ -90,13 +90,20 @@ export default function AddPersonScreen() {
 
   const handleSave = () => {
     if (!currentPatientId) return;
+    const personId = `person-${Date.now()}`;
     const person: Person = {
-      id: `person-${Date.now()}`,
+      id: personId,
       patientId: currentPatientId,
       name: name.trim(),
       relationship,
       nickname: nickname.trim() || undefined,
-      photos,
+      photos: photos.map((uri, index) => ({
+        id: `${personId}-photo-${index}`,
+        personId,
+        storagePath: uri,
+        url: uri,
+        createdAt: new Date().toISOString(),
+      })),
       hasVoiceMessage,
       hasAnnouncement: false,
       createdAt: new Date().toISOString(),
