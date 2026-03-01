@@ -1,8 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getApiBaseUrl } from '@/utils/recognitionApi';
 
-const envBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/+$/, '');
-const API_BASE_URL =
-  envBaseUrl ?? (__DEV__ ? 'http://localhost:8000/v1' : 'https://your-production-api.com/v1');
+const API_BASE_URL = getApiBaseUrl();
 
 const TOKEN_KEY = 'rememberme_auth_token';
 

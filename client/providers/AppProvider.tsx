@@ -16,7 +16,7 @@ import {
   fetchPeople,
   fetchPreferences,
 } from '@/utils/backendApi';
-import { getRecognitionPatientId } from '@/utils/recognitionApi';
+import { getApiBaseUrl, getRecognitionPatientId } from '@/utils/recognitionApi';
 import {
   defaultPreferences,
   samplePatients,
@@ -36,6 +36,21 @@ const STORAGE_KEYS = {
   lastRecognition: 'rememberme_last_recognition',
 };
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export const [AppProvider, useApp] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -52,6 +67,7 @@ export const [AppProvider, useApp] = createContextHook(() => {
     queryKey: ['appData'],
     queryFn: async () => {
       console.log('[AppProvider] Loading data from storage/backend...');
+      console.log('[AppProvider] API base URL:', getApiBaseUrl());
       const [
         storedPatients,
         storedPeople,
@@ -77,17 +93,26 @@ export const [AppProvider, useApp] = createContextHook(() => {
       const configuredPatientId = getRecognitionPatientId(storedCurrentPatient || null);
       if (configuredPatientId) {
         try {
-          const [patient, people, prefs, logs] = await Promise.all([
-            fetchPatient(configuredPatientId),
-            fetchPeople(configuredPatientId),
-            fetchPreferences(configuredPatientId),
-            fetchLogs(configuredPatientId),
-          ]);
+          const [patient, people, prefs, logs] = await withTimeout(
+            Promise.all([
+              fetchPatient(configuredPatientId),
+              fetchPeople(configuredPatientId),
+              fetchPreferences(configuredPatientId),
+              fetchLogs(configuredPatientId),
+            ]),
+            10000,
+            'Backend bootstrap'
+          );
 
           const photoUrls = people.flatMap((person) =>
             person.photos.map((photo) => photo.url)
           );
-          await Promise.all(photoUrls.map((url) => Image.prefetch(url)));
+          // Keep startup resilient: image prefetch should never block initial app boot.
+          if (photoUrls.length > 0) {
+            void Promise.all(photoUrls.map((url) => Image.prefetch(url))).catch((error) => {
+              console.warn('[AppProvider] Image prefetch failed:', error);
+            });
+          }
 
           return {
             patients: [patient],

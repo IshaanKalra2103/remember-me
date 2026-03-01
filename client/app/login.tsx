@@ -22,7 +22,7 @@ type Step = 'email' | 'code';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { startAuth, signIn, signInPending, signInError } = useApp();
+  const { signIn } = useApp();
 
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
@@ -51,7 +51,7 @@ export default function LoginScreen() {
     setIsLoading(true);
 
     try {
-      await startAuth(email);
+      // Local/dev flow: move to code step after basic email validation.
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setStep('code');
       setTimeout(() => codeInputRef.current?.focus(), 100);
@@ -69,14 +69,17 @@ export default function LoginScreen() {
     }
 
     setError(null);
+    setIsLoading(true);
 
     try {
-      await signIn(email, code);
+      await signIn(email);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       router.replace('/caregiver/dashboard');
     } catch (err: any) {
       setError(err.message || 'Invalid code');
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -143,7 +146,7 @@ export default function LoginScreen() {
                     onChangeText={setCode}
                     keyboardType="number-pad"
                     maxLength={4}
-                    editable={!signInPending}
+                    editable={!isLoading}
                   />
                 </View>
               )}
@@ -151,11 +154,11 @@ export default function LoginScreen() {
               {error && <Text style={styles.errorText}>{error}</Text>}
 
               <TouchableOpacity
-                style={[styles.button, (isLoading || signInPending) && styles.buttonDisabled]}
+                style={[styles.button, isLoading && styles.buttonDisabled]}
                 onPress={step === 'email' ? handleSendCode : handleVerifyCode}
-                disabled={isLoading || signInPending}
+                disabled={isLoading}
               >
-                {isLoading || signInPending ? (
+                {isLoading ? (
                   <ActivityIndicator color={Colors.white} />
                 ) : (
                   <>

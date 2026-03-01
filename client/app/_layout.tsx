@@ -4,7 +4,6 @@ import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { ElevenLabsProvider } from "@elevenlabs/react-native";
 import { AppProvider, useApp } from "@/providers/AppProvider";
 import MainLoader from "@/components/MainLoader";
 import Colors from "@/constants/colors";
@@ -59,11 +58,9 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={styles.root}>
-        <ElevenLabsProvider>
-          <AppProvider>
-            <AppBootstrap />
-          </AppProvider>
-        </ElevenLabsProvider>
+        <AppProvider>
+          <AppBootstrap />
+        </AppProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>
   );

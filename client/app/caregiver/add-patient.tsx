@@ -56,6 +56,7 @@ export default function AddPatientScreen() {
       language,
       supervisionMode,
       autoPlayAudio,
+      hasVoiceSample: false,
       createdAt: new Date().toISOString(),
     };
 

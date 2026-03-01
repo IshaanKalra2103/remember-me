@@ -15,32 +15,23 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import {
   ArrowLeft,
   Brain,
   MessageCircle,
-  Mic,
-  MicOff,
-  Phone,
-  PhoneOff,
   RefreshCcw,
   Send,
   Sparkles,
   X,
 } from 'lucide-react-native';
-import { useConversation } from '@elevenlabs/react-native';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import {
-  MemoryAgentConfigResponse,
   PatientMemoryRecord,
-  fetchMemoryAgentConfig,
-  fetchMemoryAgentHealth,
   fetchPatientMemories,
   generateMemoryCustomImage,
-  setMemoryAgentPersonName,
+  recallMemory,
 } from '@/utils/backendApi';
 
 type ChatMessage = {
@@ -196,15 +187,7 @@ export default function PatientMemoryAgentScreen() {
   const [mode, setMode] = useState<SectionMode>('ask');
 
   const [query, setQuery] = useState('');
-  const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [micMuted, setMicMuted] = useState(false);
-
-  const [agentStatus, setAgentStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [agentError, setAgentError] = useState<string | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
-  const [hasElevenLabsKey, setHasElevenLabsKey] = useState(false);
-  const [agentConfig, setAgentConfig] = useState<MemoryAgentConfigResponse | null>(null);
 
   const [cloudLoading, setCloudLoading] = useState(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
@@ -225,13 +208,11 @@ export default function PatientMemoryAgentScreen() {
     {
       id: 'welcome',
       role: 'assistant',
-      text: 'Ask about a specific memory. You can type or use Start Voice.',
+      text: 'Ask me about a specific memory. Type your question below.',
     },
   ]);
 
   const askScrollRef = useRef<ScrollView>(null);
-  const contextSentConversationIdRef = useRef<string | null>(null);
-  const pendingTypedMessageRef = useRef<string | null>(null);
 
   const orbSize = useMemo(() => Math.max(250, Math.min(windowWidth - 40, 410)), [windowWidth]);
 
@@ -255,46 +236,6 @@ export default function PatientMemoryAgentScreen() {
     ]);
   }, []);
 
-  const conversation = useConversation({
-    onConnect: ({ conversationId }) => {
-      setSessionError(null);
-      setMicMuted(false);
-      addMessage('system', `Voice session connected (${conversationId}).`);
-    },
-    onDisconnect: ({ reason }) => {
-      contextSentConversationIdRef.current = null;
-      setMicMuted(false);
-      addMessage('system', `Voice session ended (${reason}).`);
-    },
-    onMessage: ({ message, source }) => {
-      const text = (message || '').trim();
-      if (!text) {
-        return;
-      }
-
-      if (source === 'user' && pendingTypedMessageRef.current === text) {
-        pendingTypedMessageRef.current = null;
-        return;
-      }
-
-      addMessage(source === 'ai' ? 'assistant' : 'user', text);
-    },
-    onError: (message) => {
-      const detail = typeof message === 'string' ? message : 'Voice agent error.';
-      setSessionError(detail);
-      addMessage('system', `Voice error: ${detail}`);
-    },
-  });
-
-  const isConnected = conversation.status === 'connected';
-
-  const sessionStatusText = useMemo(() => {
-    if (isStarting) {
-      return 'connecting';
-    }
-    return conversation.status;
-  }, [conversation.status, isStarting]);
-
   useEffect(() => {
     if (mode !== 'ask') {
       return;
@@ -303,46 +244,6 @@ export default function PatientMemoryAgentScreen() {
       askScrollRef.current?.scrollToEnd({ animated: true });
     });
   }, [messages, mode]);
-
-  const loadMemoryAgentConnection = useCallback(
-    async (includeConversationToken = false) => {
-      if (!currentPatientId) {
-        setAgentStatus('error');
-        setAgentError('No patient selected.');
-        return null;
-      }
-
-      setAgentStatus('loading');
-      setAgentError(null);
-
-      try {
-        const [health, config] = await Promise.all([
-          fetchMemoryAgentHealth(),
-          fetchMemoryAgentConfig(currentPatientId, {
-            maxMemories: 5,
-            includeConversationToken,
-          }),
-        ]);
-
-        setHasElevenLabsKey(health.has_elevenlabs_key);
-        setAgentConfig(config);
-        setAgentStatus('ready');
-
-        if (config.personName) {
-          await setMemoryAgentPersonName(config.personName);
-        }
-
-        return config;
-      } catch (error) {
-        const detail =
-          error instanceof Error ? error.message : 'Failed to initialize memory agent.';
-        setAgentStatus('error');
-        setAgentError(detail);
-        return null;
-      }
-    },
-    [currentPatientId]
-  );
 
   const loadCloudMemories = useCallback(
     async (force = false) => {
@@ -371,10 +272,6 @@ export default function PatientMemoryAgentScreen() {
   );
 
   useEffect(() => {
-    void loadMemoryAgentConnection(false);
-  }, [loadMemoryAgentConnection]);
-
-  useEffect(() => {
     if (mode === 'cloud') {
       void loadCloudMemories(false);
     }
@@ -393,117 +290,9 @@ export default function PatientMemoryAgentScreen() {
     return () => clearInterval(id);
   }, [mode, modalVisible]);
 
-  const startVoiceSession = useCallback(async (): Promise<boolean> => {
-    if (!currentPatientId) {
-      setSessionError('No patient selected.');
-      return false;
-    }
-
-    if (conversation.status === 'connected') {
-      return true;
-    }
-
-    const permission = await Audio.requestPermissionsAsync();
-    if (permission.status !== 'granted') {
-      setSessionError('Microphone permission is required to start voice chat.');
-      return false;
-    }
-
-    const startWithConfig = async (config: MemoryAgentConfigResponse) => {
-      const startPayload = config.conversationToken
-        ? { conversationToken: config.conversationToken }
-        : { agentId: config.agentId };
-
-      await conversation.startSession({
-        ...startPayload,
-        dynamicVariables: {
-          patient_id: currentPatientId,
-          linked_person: config.personName ?? 'unknown',
-          memories_count: config.memoriesCount,
-        },
-      });
-    };
-
-    const baseConfig = agentConfig ?? (await loadMemoryAgentConnection(false));
-    if (!baseConfig) {
-      return false;
-    }
-
-    setIsStarting(true);
-    setSessionError(null);
-
-    try {
-      await startWithConfig(baseConfig);
-      return true;
-    } catch (error) {
-      try {
-        const tokenConfig = await loadMemoryAgentConnection(true);
-        if (!tokenConfig?.conversationToken) {
-          throw error;
-        }
-        await startWithConfig(tokenConfig);
-        return true;
-      } catch (retryError) {
-        const detail =
-          retryError instanceof Error
-            ? retryError.message
-            : 'Failed to start voice session.';
-        setSessionError(detail);
-        return false;
-      }
-    } finally {
-      setIsStarting(false);
-    }
-  }, [agentConfig, conversation, currentPatientId, loadMemoryAgentConnection]);
-
-  const endVoiceSession = useCallback(async () => {
-    if (conversation.status !== 'connected') {
-      return;
-    }
-    try {
-      await conversation.endSession();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Failed to end voice session.';
-      setSessionError(detail);
-    }
-  }, [conversation]);
-
-  const toggleMic = useCallback(() => {
-    const nextMuted = !micMuted;
-    setMicMuted(nextMuted);
-    conversation.setMicMuted(nextMuted);
-  }, [conversation, micMuted]);
-
-  useEffect(() => {
-    if (!isConnected || !agentConfig) {
-      return;
-    }
-
-    const conversationId = conversation.getId();
-    if (!conversationId) {
-      return;
-    }
-    if (contextSentConversationIdRef.current === conversationId) {
-      return;
-    }
-
-    const context = [
-      'Memory context for this patient:',
-      agentConfig.contextText,
-      agentConfig.personName
-        ? `Current linked person name: ${agentConfig.personName}`
-        : 'No linked person name yet.',
-      'Use this only as memory aid context. If uncertain, ask a gentle follow-up.',
-    ].join('\n');
-
-    conversation.sendContextualUpdate(context);
-    contextSentConversationIdRef.current = conversationId;
-    addMessage('system', 'Memory context synced to the live voice agent.');
-  }, [addMessage, agentConfig, conversation, isConnected]);
-
   const handleAsk = useCallback(async () => {
     const trimmed = query.trim();
-    if (!trimmed || isSending) {
+    if (!trimmed || isSending || !currentPatientId) {
       return;
     }
 
@@ -512,24 +301,19 @@ export default function PatientMemoryAgentScreen() {
     }
 
     setQuery('');
+    addMessage('user', trimmed);
     setIsSending(true);
 
     try {
-      if (!isConnected) {
-        const started = await startVoiceSession();
-        if (!started) {
-          return;
-        }
-      }
-
-      addMessage('user', trimmed);
-      pendingTypedMessageRef.current = trimmed;
-      conversation.sendUserActivity();
-      conversation.sendUserMessage(trimmed);
+      const result = await recallMemory(currentPatientId, trimmed);
+      addMessage('assistant', result.response_text);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Failed to recall memory.';
+      addMessage('system', `Error: ${detail}`);
     } finally {
       setIsSending(false);
     }
-  }, [addMessage, conversation, isConnected, isSending, query, startVoiceSession]);
+  }, [addMessage, currentPatientId, isSending, query]);
 
   const openMemoryModal = useCallback((memory: PatientMemoryRecord) => {
     setSelectedMemory(memory);
@@ -618,92 +402,6 @@ export default function PatientMemoryAgentScreen() {
               contentContainerStyle={styles.chatContent}
               keyboardShouldPersistTaps="handled"
             >
-              <View style={styles.agentCard}>
-                <View style={styles.agentHeader}>
-                  <Text style={styles.agentTitle}>Voice Agent Link</Text>
-                  <TouchableOpacity
-                    style={styles.agentRefreshButton}
-                    onPress={() => void loadMemoryAgentConnection(false)}
-                  >
-                    <RefreshCcw size={13} color={Colors.accentDark} />
-                    <Text style={styles.agentRefreshText}>Refresh</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {agentStatus === 'loading' ? (
-                  <View style={styles.agentLoadingRow}>
-                    <ActivityIndicator size="small" color={Colors.accent} />
-                    <Text style={styles.agentMetaText}>Loading memory-agent config...</Text>
-                  </View>
-                ) : agentStatus === 'error' ? (
-                  <Text style={styles.agentErrorText}>{agentError || 'Memory-agent unavailable.'}</Text>
-                ) : (
-                  <>
-                    <Text style={styles.agentMetaText}>Agent: {agentConfig?.agentId || 'unknown'}</Text>
-                    <Text style={styles.agentMetaText}>
-                      Memories in context: {agentConfig?.memoriesCount ?? 0}
-                    </Text>
-                    <Text style={styles.agentMetaText}>Voice session: {sessionStatusText}</Text>
-                    <Text style={styles.agentMetaText}>
-                      Voice service key: {hasElevenLabsKey ? 'configured' : 'missing'}
-                    </Text>
-                    {agentConfig?.personName ? (
-                      <Text style={styles.agentMetaText}>
-                        Linked person name: {agentConfig.personName}
-                      </Text>
-                    ) : null}
-                    {agentConfig?.warnings?.map((warning, idx) => (
-                      <Text key={`agent-warning-${idx}`} style={styles.agentWarningText}>
-                        {warning}
-                      </Text>
-                    ))}
-                    {sessionError ? <Text style={styles.agentErrorText}>{sessionError}</Text> : null}
-
-                    <View style={styles.sessionButtonsRow}>
-                      {isConnected ? (
-                        <TouchableOpacity
-                          style={[styles.sessionButton, styles.sessionButtonDanger]}
-                          onPress={() => void endVoiceSession()}
-                        >
-                          <PhoneOff size={14} color={Colors.white} />
-                          <Text style={styles.sessionButtonText}>End Voice</Text>
-                        </TouchableOpacity>
-                      ) : (
-                        <TouchableOpacity
-                          style={[
-                            styles.sessionButton,
-                            styles.sessionButtonPrimary,
-                            (isStarting || agentStatus !== 'ready') && styles.sessionButtonDisabled,
-                          ]}
-                          onPress={() => void startVoiceSession()}
-                          disabled={isStarting || agentStatus !== 'ready'}
-                        >
-                          <Phone size={14} color={Colors.white} />
-                          <Text style={styles.sessionButtonText}>Start Voice</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      <TouchableOpacity
-                        style={[
-                          styles.sessionButton,
-                          styles.sessionButtonNeutral,
-                          (!isConnected || isStarting) && styles.sessionButtonDisabled,
-                        ]}
-                        onPress={toggleMic}
-                        disabled={!isConnected || isStarting}
-                      >
-                        {micMuted ? (
-                          <MicOff size={14} color={Colors.text} />
-                        ) : (
-                          <Mic size={14} color={Colors.text} />
-                        )}
-                        <Text style={styles.sessionButtonTextDark}>{micMuted ? 'Unmute' : 'Mute'}</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </>
-                )}
-              </View>
-
               {messages.map((message) => (
                 <View
                   key={message.id}
@@ -730,6 +428,11 @@ export default function PatientMemoryAgentScreen() {
                   </Text>
                 </View>
               ))}
+              {isSending && (
+                <View style={[styles.bubble, styles.assistantBubble]}>
+                  <ActivityIndicator size="small" color={Colors.accent} />
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.inputBar}>
@@ -737,23 +440,19 @@ export default function PatientMemoryAgentScreen() {
                 style={styles.input}
                 value={query}
                 onChangeText={setQuery}
-                placeholder={isConnected ? 'Ask your memory question...' : 'Start voice or type to begin...'}
+                placeholder="Ask about a memory..."
                 placeholderTextColor={Colors.textTertiary}
                 multiline
                 maxLength={300}
-                onFocus={() => {
-                  if (isConnected) {
-                    conversation.sendUserActivity();
-                  }
-                }}
+                onSubmitEditing={() => void handleAsk()}
               />
               <TouchableOpacity
                 style={[
                   styles.sendButton,
-                  (!query.trim() || isSending || agentStatus !== 'ready') && styles.sendButtonDisabled,
+                  (!query.trim() || isSending) && styles.sendButtonDisabled,
                 ]}
                 onPress={() => void handleAsk()}
-                disabled={!query.trim() || isSending || agentStatus !== 'ready'}
+                disabled={!query.trim() || isSending}
               >
                 {isSending ? (
                   <ActivityIndicator size="small" color={Colors.white} />
@@ -786,7 +485,7 @@ export default function PatientMemoryAgentScreen() {
               </View>
             ) : cloudError ? (
               <View style={styles.cloudStateCard}>
-                <Text style={styles.agentErrorText}>{cloudError}</Text>
+                <Text style={styles.errorText}>{cloudError}</Text>
               </View>
             ) : (
               <View style={styles.cloudSphereWrap}>
@@ -1066,98 +765,6 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     gap: 10,
   },
-  agentCard: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6,
-  },
-  agentHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  agentTitle: {
-    color: Colors.accentDark,
-    fontSize: 13,
-    fontWeight: '700' as const,
-  },
-  agentRefreshButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: Colors.accentLight,
-  },
-  agentRefreshText: {
-    color: Colors.accentDark,
-    fontSize: 12,
-    fontWeight: '600' as const,
-  },
-  agentLoadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  agentMetaText: {
-    color: Colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  agentWarningText: {
-    color: '#B68934',
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  agentErrorText: {
-    color: Colors.destructive,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  sessionButtonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  sessionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 11,
-    height: 34,
-    borderRadius: 10,
-  },
-  sessionButtonPrimary: {
-    backgroundColor: Colors.accent,
-  },
-  sessionButtonDanger: {
-    backgroundColor: Colors.destructive,
-  },
-  sessionButtonNeutral: {
-    backgroundColor: Colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  sessionButtonDisabled: {
-    opacity: 0.5,
-  },
-  sessionButtonText: {
-    color: Colors.white,
-    fontSize: 12,
-    fontWeight: '700' as const,
-  },
-  sessionButtonTextDark: {
-    color: Colors.text,
-    fontSize: 12,
-    fontWeight: '700' as const,
-  },
   bubble: {
     borderRadius: 16,
     paddingHorizontal: 14,
@@ -1228,6 +835,11 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.5,
+  },
+  errorText: {
+    color: Colors.destructive,
+    fontSize: 12,
+    lineHeight: 17,
   },
   cloudScroll: {
     flex: 1,
