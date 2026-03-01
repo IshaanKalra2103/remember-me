@@ -1,10 +1,13 @@
+import contextlib
 import hashlib
+import io
+import os
+import sys
 import uuid
 from math import sqrt
 from typing import Optional
 
 import cv2
-import insightface
 import numpy as np
 import requests
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -26,8 +29,32 @@ MEDIUM_CONFIDENCE_SIMILARITY = 0.45
 
 PHOTO_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
 
-FACE_APP = insightface.app.FaceAnalysis(name="buffalo_l")
-FACE_APP.prepare(ctx_id=0, det_size=(640, 640))
+
+def _init_face_app():
+    """Initialize insightface with suppressed output."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        import insightface
+        import onnxruntime
+
+        _available_providers = set(onnxruntime.get_available_providers())
+        _preferred_providers = [
+            "CUDAExecutionProvider",
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        _selected_providers = [
+            provider for provider in _preferred_providers if provider in _available_providers
+        ] or ["CPUExecutionProvider"]
+
+        app = insightface.app.FaceAnalysis(
+            name="buffalo_l",
+            providers=_selected_providers,
+        )
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        return app
+
+
+FACE_APP = _init_face_app()
 
 
 def _normalize(vector: list[float]) -> list[float]:

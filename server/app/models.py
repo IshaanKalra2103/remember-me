@@ -60,9 +60,9 @@ class PatientOut(CamelModel):
     name: str
     language: str
     avatar_url: Optional[str] = None
-    pin_hash: Optional[str] = None
     supervision_mode: bool
     auto_play_audio: bool
+    has_voice_sample: bool = False
     created_at: datetime
 
 
@@ -74,22 +74,13 @@ class PatientPublicOut(CamelModel):
     avatar_url: Optional[str] = None
     supervision_mode: bool
     auto_play_audio: bool
+    has_voice_sample: bool = False
     created_at: datetime
 
 
-# ── PIN ───────────────────────────────────────────────────────────────
-
-
-class PinSetRequest(CamelModel):
-    pin: str
-
-
-class PinVerifyRequest(CamelModel):
-    pin: str
-
-
-class PinVerifyResponse(CamelModel):
-    valid: bool
+class VoiceSampleResponse(CamelModel):
+    success: bool
+    message: str
 
 
 # ── Preferences ───────────────────────────────────────────────────────

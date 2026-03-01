@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,7 @@ import {
   Animated,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RotateCcw, HandHelping, ArrowLeft, Heart } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +16,7 @@ import { useApp } from '@/providers/AppProvider';
 
 export default function PatientNotSureScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ handoff?: string }>();
   const { addActivityLogEntry, currentPatientId } = useApp();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [showHandoff, setShowHandoff] = React.useState<boolean>(false);
@@ -33,7 +34,7 @@ export default function PatientNotSureScreen() {
     router.replace('/patient-recognize');
   };
 
-  const handleAskHelp = () => {
+  const handleAskHelp = useCallback(() => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (currentPatientId) {
@@ -44,11 +45,17 @@ export default function PatientNotSureScreen() {
     }
 
     setShowHandoff(true);
-  };
+  }, [addActivityLogEntry, currentPatientId]);
 
-  const handleReturnToPIN = () => {
+  useEffect(() => {
+    if (params.handoff === 'true') {
+      handleAskHelp();
+    }
+  }, [params.handoff, handleAskHelp]);
+
+  const handleReturnToDashboard = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/patient-pin');
+    router.replace('/caregiver/dashboard');
   };
 
   const handleGoBack = () => {
@@ -69,12 +76,12 @@ export default function PatientNotSureScreen() {
             <Text style={styles.handoffSubtext}>They can help from here</Text>
             <TouchableOpacity
               style={styles.returnButton}
-              onPress={handleReturnToPIN}
+              onPress={handleReturnToDashboard}
               activeOpacity={0.85}
-              testID="return-to-pin"
+              testID="return-to-dashboard"
             >
               <ArrowLeft size={20} color={Colors.white} />
-              <Text style={styles.returnButtonText}>Return to PIN Screen</Text>
+              <Text style={styles.returnButtonText}>Return to Dashboard</Text>
             </TouchableOpacity>
           </Animated.View>
         </SafeAreaView>
@@ -90,8 +97,8 @@ export default function PatientNotSureScreen() {
             <View style={styles.iconContainer}>
               <Heart size={32} color={Colors.accent} />
             </View>
-            <Text style={styles.title}>I'm not sure{'\n'}who this is</Text>
-            <Text style={styles.subtitle}>That's okay. Let's try again.</Text>
+            <Text style={styles.title}>{"I'm not sure"}{'\n'}who this is</Text>
+            <Text style={styles.subtitle}>{"That's okay. Let's try again."}</Text>
           </View>
 
           <View style={styles.buttonsContainer}>

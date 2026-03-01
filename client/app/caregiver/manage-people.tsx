@@ -51,7 +51,9 @@ export default function ManagePeopleScreen() {
       <View style={styles.personInfo}>
         <Text style={styles.personName}>{item.name}</Text>
         <Text style={styles.personRelationship}>
-          {item.relationship.charAt(0).toUpperCase() + item.relationship.slice(1)}
+          {item.relationship
+            ? item.relationship.charAt(0).toUpperCase() + item.relationship.slice(1)
+            : 'Unknown'}
         </Text>
         <View style={styles.chips}>
           {item.photos.length > 0 && (

@@ -62,3 +62,5 @@ Thumbs.db
 plan/
 tmp/
 *.tmp
+eleven_sandbox/
+client/expo-env.d.ts

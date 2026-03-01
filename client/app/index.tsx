@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Heart, Shield, Lock } from 'lucide-react-native';
+import { Heart, Shield, Eye } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 
@@ -61,7 +61,7 @@ export default function WelcomeScreen() {
 
   const handlePatient = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push('/patient-pin');
+    router.push('/patient-home');
   };
 
   const handlePrivacy = () => {
@@ -143,14 +143,14 @@ export default function WelcomeScreen() {
               testID="patient-button"
             >
               <View style={[styles.cardIconContainer, styles.patientIconContainer]}>
-                <Lock size={28} color={Colors.white} />
+                <Eye size={28} color={Colors.white} />
               </View>
               <View style={styles.cardContent}>
                 <Text style={[styles.cardTitle, styles.patientCardTitle]}>
                   Patient Mode
                 </Text>
                 <Text style={[styles.cardDescription, styles.patientCardDescription]}>
-                  Requires caregiver PIN
+                  Start recognition assistance
                 </Text>
               </View>
             </TouchableOpacity>

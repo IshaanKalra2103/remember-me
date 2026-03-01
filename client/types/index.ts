@@ -5,6 +5,7 @@ export interface Patient {
   avatarUrl?: string;
   supervisionMode: boolean;
   autoPlayAudio: boolean;
+  hasVoiceSample: boolean;
   createdAt: string;
 }
 

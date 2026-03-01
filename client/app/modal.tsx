@@ -24,19 +24,19 @@ export default function PrivacyModal() {
       <View style={styles.section}>
         <Text style={styles.heading}>Camera Access</Text>
         <Text style={styles.body}>
-          The camera is used only when the patient taps "Who is here?" to identify someone. It is never recording in the background.
+          {'The camera is used only when the patient taps "Who is here?" to identify someone. It is never recording in the background.'}
         </Text>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.heading}>Caregiver Control</Text>
         <Text style={styles.body}>
-          Only caregivers can add or remove people, change settings, and view activity logs. Patient mode is protected by a PIN.
+          Only caregivers can add or remove people, change settings, and view activity logs.
         </Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.heading}>You're in Charge</Text>
+        <Text style={styles.heading}>{"You're in Charge"}</Text>
         <Text style={styles.body}>
           You can delete all data at any time from the caregiver settings. Uninstalling the app removes everything.
         </Text>

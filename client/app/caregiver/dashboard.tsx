@@ -21,6 +21,7 @@ import {
   LogOut,
   Heart,
   RefreshCw,
+  Mic,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -36,7 +37,7 @@ interface DashboardAction {
 
 export default function CaregiverDashboard() {
   const router = useRouter();
-  const { currentPatient, patients, signOut, currentPeople } = useApp();
+  const { currentPatient, patients, signOut, currentPeople, selectPatient } = useApp();
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -53,6 +54,12 @@ export default function CaregiverDashboard() {
       title: 'Add / Manage Patient',
       description: patients.length === 0 ? 'Create your first patient profile' : `${patients.length} patient${patients.length > 1 ? 's' : ''} set up`,
       route: '/caregiver/add-patient',
+    },
+    {
+      icon: <Mic size={22} color={Colors.accent} />,
+      title: 'Record Voice Sample',
+      description: currentPatient?.hasVoiceSample ? 'Voice sample recorded' : 'Required for speaker identification',
+      route: '/caregiver/voice-sample',
     },
     {
       icon: <Users size={22} color={Colors.accent} />,
@@ -81,7 +88,7 @@ export default function CaregiverDashboard() {
 
   const handleEnterPatientMode = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/patient-pin');
+    router.push('/patient-home');
   };
 
   const handleSignOut = () => {
@@ -96,6 +103,18 @@ export default function CaregiverDashboard() {
         },
       },
     ]);
+  };
+
+  const handleSwitchPatient = () => {
+    if (!currentPatient || patients.length <= 1) return;
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const currentIndex = patients.findIndex((patient) => patient.id === currentPatient.id);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % patients.length : 0;
+    const nextPatient = patients[nextIndex];
+    if (nextPatient) {
+      selectPatient(nextPatient.id);
+    }
   };
 
   return (
@@ -127,7 +146,12 @@ export default function CaregiverDashboard() {
                   <Text style={styles.patientName}>{currentPatient.name}</Text>
                 </View>
                 {patients.length > 1 && (
-                  <TouchableOpacity style={styles.switchButton}>
+                  <TouchableOpacity
+                    style={styles.switchButton}
+                    onPress={handleSwitchPatient}
+                    activeOpacity={0.8}
+                    testID="switch-patient"
+                  >
                     <RefreshCw size={16} color={Colors.accent} />
                     <Text style={styles.switchText}>Switch</Text>
                   </TouchableOpacity>

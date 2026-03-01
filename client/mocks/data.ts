@@ -17,6 +17,7 @@ export const samplePatients: Patient[] = [
     language: 'English',
     supervisionMode: true,
     autoPlayAudio: true,
+    hasVoiceSample: false,
     createdAt: '2025-01-15T10:00:00Z',
   },
 ];

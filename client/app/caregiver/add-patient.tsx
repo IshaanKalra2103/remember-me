@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Check, ChevronRight, User, Lock, Settings } from 'lucide-react-native';
+import { Check, ChevronRight, User, Settings } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
@@ -24,16 +24,12 @@ export default function AddPatientScreen() {
   const [step, setStep] = useState<number>(0);
   const [name, setName] = useState<string>('');
   const [language, setLanguage] = useState<string>('English');
-  const [pin, setPin] = useState<string>('');
-  const [confirmPin, setConfirmPin] = useState<string>('');
   const [supervisionMode, setSupervisionMode] = useState<boolean>(true);
   const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
-  const [pinError, setPinError] = useState<string>('');
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const steps = [
     { title: 'Basics', icon: <User size={20} color={Colors.accent} /> },
-    { title: 'PIN', icon: <Lock size={20} color={Colors.accent} /> },
     { title: 'Preferences', icon: <Settings size={20} color={Colors.accent} /> },
   ];
 
@@ -47,38 +43,29 @@ export default function AddPatientScreen() {
 
   const handleNext = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (step === 1) {
-      if (pin.length !== 4) {
-        setPinError('PIN must be 4 digits');
-        return;
-      }
-      if (pin !== confirmPin) {
-        setPinError("PINs don't match");
-        return;
-      }
-      setPinError('');
-    }
-    if (step < 2) {
+
+    if (step < 1) {
       animateTransition(() => setStep(step + 1));
-    } else {
-      const newPatient: Patient = {
-        id: `patient-${Date.now()}`,
-        name: name.trim(),
-        language,
-        pin,
-        supervisionMode,
-        autoPlayAudio,
-        createdAt: new Date().toISOString(),
-      };
-      addPatient(newPatient);
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      animateTransition(() => setStep(3));
+      return;
     }
+
+    const newPatientId = `patient-${Date.now()}`;
+    const newPatient: Patient = {
+      id: newPatientId,
+      name: name.trim(),
+      language,
+      supervisionMode,
+      autoPlayAudio,
+      createdAt: new Date().toISOString(),
+    };
+
+    addPatient(newPatient);
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    animateTransition(() => setStep(2));
   };
 
   const canProceed = () => {
     if (step === 0) return name.trim().length > 0;
-    if (step === 1) return pin.length === 4 && confirmPin.length === 4;
     return true;
   };
 
@@ -109,7 +96,7 @@ export default function AddPatientScreen() {
     </View>
   );
 
-  if (step === 3) {
+  if (step === 2) {
     return (
       <View style={styles.container}>
         <View style={styles.successContainer}>
@@ -118,7 +105,7 @@ export default function AddPatientScreen() {
           </View>
           <Text style={styles.successTitle}>Patient Created</Text>
           <Text style={styles.successMessage}>
-            {name} is all set up.{'\n'}Next, add the people they know.
+            {name} is all set up.{"\n"}Next, add the people they know.
           </Text>
           <TouchableOpacity
             style={styles.primaryButton}
@@ -156,7 +143,7 @@ export default function AddPatientScreen() {
             <View>
               <Text style={styles.stepTitle}>Patient Basics</Text>
               <Text style={styles.stepDescription}>
-                Enter the patient's name and preferred language.
+                Enter the patient name and preferred language.
               </Text>
               <View style={styles.inputGroup}>
                 <Text style={styles.inputLabel}>Patient Name</Text>
@@ -185,51 +172,6 @@ export default function AddPatientScreen() {
           )}
 
           {step === 1 && (
-            <View>
-              <Text style={styles.stepTitle}>Set a PIN</Text>
-              <Text style={styles.stepDescription}>
-                This PIN protects Patient Mode. Share it only with trusted people.
-              </Text>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>4-Digit PIN</Text>
-                <TextInput
-                  style={styles.input}
-                  value={pin}
-                  onChangeText={(t) => {
-                    setPin(t.replace(/[^0-9]/g, '').slice(0, 4));
-                    setPinError('');
-                  }}
-                  placeholder="Enter PIN"
-                  placeholderTextColor={Colors.textTertiary}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                  autoFocus
-                  testID="pin-input"
-                />
-              </View>
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Confirm PIN</Text>
-                <TextInput
-                  style={styles.input}
-                  value={confirmPin}
-                  onChangeText={(t) => {
-                    setConfirmPin(t.replace(/[^0-9]/g, '').slice(0, 4));
-                    setPinError('');
-                  }}
-                  placeholder="Re-enter PIN"
-                  placeholderTextColor={Colors.textTertiary}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                  testID="confirm-pin-input"
-                />
-              </View>
-              {pinError !== '' && <Text style={styles.errorText}>{pinError}</Text>}
-            </View>
-          )}
-
-          {step === 2 && (
             <View>
               <Text style={styles.stepTitle}>Supervision Preferences</Text>
               <Text style={styles.stepDescription}>
@@ -275,7 +217,7 @@ export default function AddPatientScreen() {
           testID="next-button"
         >
           <Text style={styles.primaryButtonText}>
-            {step === 2 ? 'Create Patient' : 'Continue'}
+            {step === 1 ? 'Create Patient' : 'Continue'}
           </Text>
           <ChevronRight size={18} color={Colors.white} />
         </TouchableOpacity>
@@ -370,11 +312,6 @@ const styles = StyleSheet.create({
     color: Colors.text,
     borderWidth: 1,
     borderColor: Colors.border,
-  },
-  errorText: {
-    fontSize: 14,
-    color: Colors.destructive,
-    marginTop: 4,
   },
   toggleRow: {
     flexDirection: 'row',

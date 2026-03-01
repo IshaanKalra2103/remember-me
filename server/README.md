@@ -1,215 +1,147 @@
 # RememberMe API
 
-Backend API for RememberMe using FastAPI and Supabase.
+Backend API for RememberMe using FastAPI + Supabase.
 
-The server currently includes:
-- caregiver auth
-- patient and people management
-- media upload routes
-- recognition session routes
-- a deterministic placeholder recognition pipeline in `server/app/api/v1/recognition.py`
+This repo powers caregiver setup and patient recognition flows. It exposes authenticated caregiver endpoints for managing patients/people/media, plus patient-mode endpoints for read-only data and activity logging. Recognition and audio generation are implemented server-side, with ML and TTS integrations.
 
-That recognition pipeline is still a stub. It no longer picks people randomly, but it is not a real face model yet:
-- it derives stable placeholder vectors from uploaded frame bytes and enrolled photo paths
-- it scores enrolled people deterministically
-- it returns `identified`, `unsure`, or `not_sure`
-- it preserves the existing API contract so the frontend can integrate now
+## Architecture Overview
 
-Run locally:
+### Roles and Auth
+- **Caregiver**: Authenticated with a bearer token. Full access to patients, people, preferences, media, and logs.
+- **Patient Mode**: No bearer token. Limited to read-only data + activity log creation + recognition session creation.
 
-```bash
+Auth flow:
+1. `POST /v1/auth/start` stores a mock OTP (dev only)
+2. `POST /v1/auth/verify` returns a bearer token
+3. Token is stored in `auth_tokens` and validated for caregiver routes
+
+### Core Data Model
+```
+caregivers (1) ──< patients (M)
+patients (1) ──< people (M) ──< photos (M)
+patients (1) ──< recognition_prefs (1)
+patients (1) ──< sessions (M) ──< recognition_events (M)
+patients (1) ──< activity_logs (M)
+```
+
+### Media Storage (Supabase Storage)
+- `photos`: Enrollment photos used for recognition
+- `voice-clips`: Caregiver-recorded voice messages
+- `announcement-audio`: Generated announcement audio (TTS)
+
+### Recognition Pipeline
+1. Client creates a `session`
+2. Client submits a frame to `/v1/sessions/{id}/frame`
+3. Server runs InsightFace detection + embedding
+4. Server compares against enrolled photo embeddings
+5. Returns `identified`, `unsure`, or `not_sure`, with candidates + confidence
+6. Logs a `recognition_event`
+
+### Audio Generation
+- Uses ElevenLabs TTS to create "This is {name}, your {relationship}"
+- Caches per person + voice/model in `announcement-audio` bucket
+- Uses signed URLs when possible
+
+## Project Structure
+```
+server/
+├── .env
+├── main.py                 # FastAPI app entry point
+├── pyproject.toml          # Dependencies
+├── uv.lock                 # Locked dependencies
+└── app/
+    ├── config.py           # Environment variables
+    ├── supabase_client.py  # Supabase singleton client
+    ├── models.py           # Pydantic request/response models
+    ├── auth_utils.py       # Auth helpers (PIN hash, tokens)
+    └── api/v1/
+        ├── auth.py         # Auth endpoints
+        ├── patients.py     # Patient CRUD + PIN + prefs + session create
+        ├── people.py       # People CRUD + media uploads
+        ├── recognition.py  # Recognition flow (InsightFace)
+        ├── audio.py        # ElevenLabs TTS
+        ├── logs.py         # Activity logs (caregiver)
+        └── patient_mode.py # Patient-mode endpoints
+```
+
+## Environment Variables
+`.env` example:
+```
+SUPABASE_URL=https://<your>.supabase.co
+SUPABASE_KEY=<service-or-anon-key>
+OPENAI_API_KEY=<your-openai-api-key>
+OPENAI_TRANSCRIBE_MODEL=<optional-model-id> # default: gpt-4o-transcribe-diarize
+ELEVENLABS_API_KEY=<your-elevenlabs-api-key>
+ELEVENLABS_VOICE_ID=<optional-voice-id>      # default: XrExE9yKIg1WjnnlVkGX
+ELEVENLABS_MODEL_ID=<optional-model-id>      # default: eleven_flash_v2_5
+```
+
+## Setup and Run
+```
 cd server
 uv sync
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
-| GET | `/v1/patients` | List all patients for caregiver | Yes |
-| POST | `/v1/patients` | Create a new patient | Yes |
-| GET | `/v1/patients/{id}` | Get patient details | Yes |
-| PATCH | `/v1/patients/{id}` | Update patient | Yes |
-| POST | `/v1/patients/{id}/pin` | Set patient PIN | Yes |
-| POST | `/v1/patients/{id}/pin/verify` | Verify patient PIN | No (patient mode) |
-| GET | `/v1/patients/{id}/preferences` | Get recognition preferences | Yes |
-| PATCH | `/v1/patients/{id}/preferences` | Update preferences | Yes |
-| POST | `/v1/patients/{id}/sessions` | Create recognition session | Yes |
 
-### People
+## Supabase Setup
+- Run [`server/sql/migrations/20260301_remove_pin_add_memories.sql`](server/sql/migrations/20260301_remove_pin_add_memories.sql).
+- Create a storage bucket named `memory-audio` for uploaded conversation clips.
 
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| GET | `/v1/patients/{id}/people` | List enrolled people | Yes |
-| POST | `/v1/patients/{id}/people` | Create person record | Yes |
-| GET | `/v1/people/{id}` | Get person details | Yes |
-| PATCH | `/v1/people/{id}` | Update person | Yes |
-| DELETE | `/v1/people/{id}` | Delete person and assets | Yes |
-| POST | `/v1/people/{id}/photos` | Upload enrollment photo | Yes |
-| DELETE | `/v1/people/{id}/photos/{photoId}` | Delete photo | Yes |
-| POST | `/v1/people/{id}/voice` | Upload voice clip | Yes |
+## API Summary
+
+### Auth
+- `POST /v1/auth/start`
+- `POST /v1/auth/verify`
+- `GET /v1/auth/me`
+
+### Patients (Caregiver)
+- `GET /v1/patients`
+- `POST /v1/patients`
+- `GET /v1/patients/{id}`
+- `PATCH /v1/patients/{id}`
+- `GET /v1/patients/{id}/preferences`
+- `PATCH /v1/patients/{id}/preferences`
+- `POST /v1/patients/{id}/sessions` (patient mode uses this unauthenticated)
+
+### People (Caregiver)
+- `GET /v1/patients/{id}/people`
+- `POST /v1/patients/{id}/people`
+- `GET /v1/people/{id}`
+- `PATCH /v1/people/{id}`
+- `DELETE /v1/people/{id}`
+- `POST /v1/people/{id}/photos`
+- `DELETE /v1/people/{id}/photos/{photoId}`
+- `POST /v1/people/{id}/voice`
 
 ### Recognition
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| POST | `/v1/sessions/{id}/frame` | Submit frame for recognition (stub) | No |
-| POST | `/v1/sessions/{id}/tiebreak` | Resolve tie between candidates | No |
-| GET | `/v1/sessions/{id}/result/{eventId}` | Get recognition result | No |
+- `POST /v1/sessions/{id}/frame`
+- `POST /v1/sessions/{id}/tiebreak`
+- `GET /v1/sessions/{id}/result/{eventId}`
 
 ### Audio
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| POST | `/v1/people/{id}/announcement-audio` | Generate announcement audio (stub) | Yes |
+- `POST /v1/people/{id}/announcement-audio`
 
 ### Activity Logs
+- `GET /v1/patients/{id}/logs`
+- `POST /v1/patients/{id}/logs`
 
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| GET | `/v1/patients/{id}/logs` | List activity logs | Yes |
-| POST | `/v1/patients/{id}/logs` | Create activity log | Yes |
-
-## Testing the API
-
-### 1. Start Authentication Flow
-
-```bash
-# Request verification code
-curl -X POST http://localhost:8000/v1/auth/start \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"test@test.com"}'
-
-# Verify with mock code "1234"
-curl -X POST http://localhost:8000/v1/auth/verify \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"test@test.com","code":"1234"}'
-# Returns: {"token":"...","caregiver":{...}}
-```
-
-### 2. Create a Patient
-
-```bash
-TOKEN="your-token-from-above"
-
-curl -X POST http://localhost:8000/v1/patients \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"John Doe","language":"en"}'
-# Returns: {"id":"...","caregiverId":"...","name":"John Doe",...}
-```
-
-### 3. Enroll a Person
-
-```bash
-PATIENT_ID="patient-uuid-from-above"
-
-# Create person
-curl -X POST http://localhost:8000/v1/patients/$PATIENT_ID/people \
-  -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"Jane Smith","relationship":"daughter"}'
-# Returns: {"id":"...","name":"Jane Smith",...}
-
-# Upload photo
-PERSON_ID="person-uuid-from-above"
-curl -X POST http://localhost:8000/v1/people/$PERSON_ID/photos \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/path/to/photo.jpg"
-```
-
-### 4. Test Recognition (Stub)
-
-```bash
-# Create session
-curl -X POST http://localhost:8000/v1/patients/$PATIENT_ID/sessions \
-  -H "Authorization: Bearer $TOKEN"
-# Returns: {"id":"...","patientId":"..."}
-
-# Submit frame (returns random stub result)
-SESSION_ID="session-uuid-from-above"
-curl -X POST http://localhost:8000/v1/sessions/$SESSION_ID/frame \
-  -F "file=@/path/to/test-image.jpg"
-# Returns: {"eventId":"...","status":"identified|unsure|not_sure",...}
-```
-
-## Project Structure
-
-```
-server/
-├── .env                          # Environment variables
-├── main.py                       # FastAPI app entry point
-├── pyproject.toml               # Project dependencies
-├── uv.lock                      # Locked dependencies
-└── app/
-    ├── __init__.py
-    ├── config.py                # Load environment variables
-    ├── supabase_client.py       # Supabase singleton client
-    ├── models.py                # Pydantic request/response models
-    ├── auth_utils.py            # Auth helpers (PIN hash, tokens)
-    └── api/
-        └── v1/
-            ├── __init__.py
-            ├── router.py        # Combine all routers
-            ├── auth.py          # Authentication endpoints
-            ├── patients.py      # Patient CRUD + PIN + preferences
-            ├── people.py        # People CRUD + media uploads
-            ├── recognition.py   # Recognition flow (stubbed)
-            ├── audio.py         # Audio generation (stubbed)
-            └── logs.py          # Activity logging
-```
-
-## Key Features
-
-### Authentication
-- Email-based OTP flow (mock code "1234" for development)
-- Bearer token authentication
-- Protected routes with `get_current_caregiver` dependency
-
-### Patient Mode
-- PIN verification without bearer token (patient-facing)
-- Separate auth flow for caregivers vs patients
-
-### File Storage
-- Photos stored in Supabase Storage `photos` bucket
-- Voice clips in `voice-clips` bucket
-- Generated audio in `announcement-audio` bucket
-- All buckets are public with CDN URLs
-
-### Data Model
-- camelCase JSON for client compatibility (via Pydantic alias_generator)
-- UUID primary keys
-- Cascade deletes for related records
-
-### Stubs
-- **Recognition**: Returns random candidates from enrolled people
-- **Audio generation**: Creates placeholder files (integrate OpenAI TTS later)
+### Patient Mode (No Auth)
+- `GET /v1/patient-mode/patients/{id}`
+- `GET /v1/patient-mode/patients/{id}/people`
+- `GET /v1/patient-mode/patients/{id}/preferences`
+- `GET /v1/patient-mode/patients/{id}/logs`
+- `POST /v1/patient-mode/patients/{id}/logs`
+- `POST /v1/patient-mode/patients/{id}/memories`
 
 ## Development Notes
-
-### Mock Auth Code
-The verification code is hardcoded to `"1234"` for development. Update `app/api/v1/auth.py` for production email delivery.
-
-### PIN Security
-PINs are hashed with SHA-256. For production, consider bcrypt or Argon2.
-
-### CORS
-All origins are allowed for development. Update `main.py` to restrict origins in production:
-
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://your-frontend.com"],
-    ...
-)
-```
+- CORS is permissive in development (lock down in production)
+- Recognition is functional but still a baseline pipeline; improve matching thresholds and performance as needed
 
 ## Next Steps
-
-1. **Recognition Pipeline**: Replace stub in `recognition.py` with actual face detection + embedding matching
-2. **Audio Generation**: Integrate OpenAI TTS in `audio.py`
-3. **Email Delivery**: Add email provider (SendGrid, Resend, etc.) to `auth.py`
-4. **Rate Limiting**: Add rate limiting middleware
-5. **Error Tracking**: Integrate Sentry or similar
-6. **Testing**: Add pytest tests for all endpoints
+- Improve recognition accuracy and throughput
+- Add real email delivery for auth codes
+- Add rate limiting and monitoring
+- Add tests for all endpoints
 
 ## License
-
 MIT
->>>>>>> main

@@ -47,12 +47,6 @@ Purpose: Fetch one patient profile with current configuration.
 ### `PATCH /v1/patients/:patientId`
 Purpose: Update editable patient metadata (name/language/settings fields as allowed).
 
-### `POST /v1/patients/:patientId/pin`
-Purpose: Set or rotate the patient mode PIN (stored as hash).
-
-### `POST /v1/patients/:patientId/pin/verify`
-Purpose: Validate PIN before entering patient mode.
-
 ### `GET /v1/patients/:patientId/preferences`
 Purpose: Read recognition behavior preferences used by patient result flow.
 
@@ -61,6 +55,9 @@ Purpose: Update preferences (auto-play, confirm behavior, display options, etc.)
 
 ### `POST /v1/patients/:patientId/sessions`
 Purpose: Create a recognition session before submitting live frame(s).
+
+### `POST /v1/patient-mode/patients/:patientId/memories`
+Purpose: Upload recorded audio, run diarized transcription, and persist a memory entry.
 
 ## `people.py`
 

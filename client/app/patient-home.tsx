@@ -67,7 +67,7 @@ export default function PatientHomeScreen() {
   };
 
   const handleSettings = () => {
-    router.push('/patient-pin');
+    router.push('/caregiver/dashboard');
   };
 
   return (
@@ -94,7 +94,7 @@ export default function PatientHomeScreen() {
               <Text style={styles.greeting}>
                 {currentPatient ? `Hi, ${currentPatient.name}` : 'Hello'}
               </Text>
-              <Text style={styles.greetingSubtext}>You're doing great</Text>
+              <Text style={styles.greetingSubtext}>{"You're doing great"}</Text>
             </View>
           </View>
 
