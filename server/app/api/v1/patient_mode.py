@@ -13,6 +13,7 @@ from app.config import (
     ELEVENLABS_VOICE_ID,
     SUPABASE_URL,
 )
+from app.gemini_service import PersonContext, generate_whisper_for_match
 from app.models import (
     ActivityLogCreate,
     ActivityLogOut,
@@ -205,40 +206,75 @@ def _upload_audio(storage_path: str, audio_bytes: bytes) -> None:
 
 @router.get("/people/{person_id}/announcement-audio", response_model=AnnouncementAudioResponse)
 async def get_announcement_audio(person_id: uuid.UUID):
-    """Get or generate announcement audio using ElevenLabs TTS (no auth required)."""
-    person = (
-        supabase.table("people")
-        .select("id, name, relationship")
-        .eq("id", str(person_id))
-        .maybe_single()
-        .execute()
-    )
-    if not person.data:
+    """Generate a personalized Gemini whisper and convert to audio via ElevenLabs.
+
+    Uses the person's bio and recent memories to create a warm, contextual
+    announcement — not a generic "This is X, your Y" message.
+    Always regenerated fresh so it reflects the latest memories.
+    """
+    pid = str(person_id)
+
+    try:
+        person = (
+            supabase.table("people")
+            .select("id, name, relationship, bio, topics_to_avoid")
+            .eq("id", pid)
+            .maybe_single()
+            .execute()
+        )
+        person_data = person.data or {}
+    except Exception:
+        person = (
+            supabase.table("people")
+            .select("id, name, relationship")
+            .eq("id", pid)
+            .maybe_single()
+            .execute()
+        )
+        person_data = person.data or {}
+
+    if not person_data:
         raise HTTPException(status_code=404, detail="Person not found")
 
-    name = person.data["name"]
-    relationship = person.data.get("relationship") or "someone you know"
-    text = f"This is {name}, your {relationship}"
+    name = person_data["name"]
+    relationship = person_data.get("relationship") or "someone you know"
+    bio = person_data.get("bio") or ""
+    avoid = person_data.get("topics_to_avoid") or []
 
-    cache_key = f"{text}|voice={ELEVENLABS_VOICE_ID}|model={ELEVENLABS_MODEL_ID}"
-    text_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
-    storage_path = f"{person_id}/{text_hash}.mp3"
-
-    # Check for cached audio first
+    # Fetch recent memories for context
+    recent: list[str] = []
     try:
-        existing = supabase.storage.from_("announcement-audio").list(str(person_id))
-        for f in existing:
-            if f["name"] == f"{text_hash}.mp3":
-                return AnnouncementAudioResponse(
-                    url=_resolve_audio_url(storage_path), cached=True
-                )
+        memories_row = (
+            supabase.table("memories")
+            .select("summary, transcription, created_at")
+            .eq("person_id", pid)
+            .order("created_at", desc=True)
+            .limit(3)
+            .execute()
+        )
+        for m in (memories_row.data or []):
+            text = m.get("summary") or m.get("transcription") or ""
+            if text:
+                recent.append(text[:200])
     except Exception:
         pass
 
-    # Generate new audio with ElevenLabs TTS
-    audio_bytes = _generate_tts_audio(text)
+    # Generate personalized whisper via Gemini
+    person_ctx = PersonContext(
+        name=name,
+        relationship=relationship,
+        bio=bio,
+        recent_memories=recent,
+        topics_to_avoid=avoid if isinstance(avoid, list) else [],
+    )
+    whisper_text = await generate_whisper_for_match(person_ctx)
+    print(f"[ANNOUNCEMENT] {name}: {whisper_text}")
 
-    # Cache the generated audio
+    # Convert to audio
+    audio_bytes = _generate_tts_audio(whisper_text)
+
+    # Upload to Supabase storage (overwrite each time for freshness)
+    storage_path = f"{person_id}/whisper_latest.mp3"
     _upload_audio(storage_path, audio_bytes)
 
     return AnnouncementAudioResponse(url=_resolve_audio_url(storage_path), cached=False)

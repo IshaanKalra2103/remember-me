@@ -12,6 +12,12 @@ import assemblyai as aai
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.config import ASSEMBLYAI_API_KEY, SUPABASE_URL
+from app.gemini_service import (
+    PersonContext,
+    evaluate_importance,
+    summarize_transcript,
+    update_profile_bio,
+)
 from app.supabase_client import supabase
 from app.titanet import embedding_from_pgvector, identify_speakers
 
@@ -197,7 +203,7 @@ def _transcribe_with_assemblyai(
 
 
 @router.post("/patient-mode/patients/{patient_id}/memories", status_code=201)
-async def create_memory(
+async def create_memory(  # noqa: RUF029 — async needed for Gemini awaits
     patient_id: uuid.UUID,
     audio: UploadFile = File(...),
     person_id: str = Form(...),
@@ -268,6 +274,45 @@ async def create_memory(
         source_format=source_format,
     )
 
+    # Gemini smart memory pipeline
+    summary: str | None = None
+    is_important: bool = False
+
+    if transcription:
+        try:
+            person_full = (
+                supabase.table("people")
+                .select("name, relationship, bio, topics_to_avoid")
+                .eq("id", str(parsed_person_id))
+                .maybe_single()
+                .execute()
+            )
+            if person_full.data:
+                avoid = person_full.data.get("topics_to_avoid") or []
+                person_ctx = PersonContext(
+                    name=person_full.data.get("name") or person_name,
+                    relationship=person_full.data.get("relationship") or "visitor",
+                    bio=person_full.data.get("bio") or "",
+                    topics_to_avoid=avoid if isinstance(avoid, list) else [],
+                )
+                current_bio = person_full.data.get("bio") or ""
+
+                summary = await summarize_transcript(transcription, person_ctx)
+                is_important = await evaluate_importance(transcription, summary, person_ctx)
+
+                if is_important:
+                    new_bio = await update_profile_bio(current_bio, summary, person_ctx)
+                    if new_bio != current_bio:
+                        supabase.table("people").update({"bio": new_bio}).eq(
+                            "id", str(parsed_person_id)
+                        ).execute()
+                        print(f"[MEMORY] Bio updated for {person_name}")
+
+                print(f"[MEMORY] Summary: {summary}")
+                print(f"[MEMORY] Important: {is_important}")
+        except Exception as e:
+            print(f"[MEMORY] Gemini pipeline error: {e}")
+
     # Save memory to database
     insert_payload = {
         "patient_id": str(patient_id),
@@ -275,6 +320,8 @@ async def create_memory(
         "person_name": person_name,
         "transcription": transcription,
         "audio_url": audio_url,
+        "summary": summary,
+        "is_important": is_important,
     }
 
     result = supabase.table("memories").insert(insert_payload).execute()
