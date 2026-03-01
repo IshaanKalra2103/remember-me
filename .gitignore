@@ -1,16 +1,66 @@
-# Virtual Environment Files
+# Environment
 .env
-.venv
+.env.*
+.venv/
+venv/
 
-# Other Files
-plan
-eleven_sandbox
-
-# Client ignore rules
-client/expo-env.d.ts
-client/.expo/
-client/node_modules/
-
-# Python cache artifacts
+# Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+*.so
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+dist/
+build/
+*.egg-info/
+
+# Node / JS
+node_modules/
+.npm/
+.pnpm-store/
+.cache/
+.parcel-cache/
+.turbo/
+.next/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+
+# Expo / React Native
+.expo/
+.expo-shared/
+web-build/
+ios/Pods/
+ios/build/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
+*.jks
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Other
+plan/
+tmp/
+*.tmp
+eleven_sandbox/
+client/expo-env.d.ts

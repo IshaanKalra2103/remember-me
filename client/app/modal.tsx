@@ -10,14 +10,14 @@ export default function PrivacyModal() {
       <View style={styles.section}>
         <Text style={styles.heading}>How RememberMe Works</Text>
         <Text style={styles.body}>
-          RememberMe helps patients recognize familiar faces using photos that caregivers provide. All recognition happens on this device.
+          RememberMe helps patients recognize familiar faces using photos that caregivers provide. Frames are sent to the recognition server to match against enrolled people.
         </Text>
       </View>
 
       <View style={styles.section}>
         <Text style={styles.heading}>Your Data Stays Here</Text>
         <Text style={styles.body}>
-          Photos, names, and personal information are stored only on this device. Nothing is uploaded to the internet or shared with anyone.
+          Photos and names are stored securely in our backend and cached on this device for fast access. They are not shared outside your account.
         </Text>
       </View>
 

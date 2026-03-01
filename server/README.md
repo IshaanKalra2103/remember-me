@@ -1,15 +1,19 @@
 # RememberMe API
 
-Backend API for RememberMe - a facial recognition assistant for people with memory challenges.
+Backend API for RememberMe using FastAPI and Supabase.
 
-## Overview
+The server currently includes:
+- caregiver auth
+- patient and people management
+- media upload routes
+- recognition session routes
+- a deterministic placeholder recognition pipeline in `server/app/api/v1/recognition.py`
 
-FastAPI backend using Supabase (PostgreSQL + Storage) to manage:
-- Caregiver authentication (email + OTP)
-- Patient profiles and preferences
-- Enrolled people with photos and voice messages
-- Recognition sessions and events (stubbed)
-- Activity logs
+That recognition pipeline is still a stub. It no longer picks people randomly, but it is not a real face model yet:
+- it derives stable placeholder vectors from uploaded frame bytes and enrolled photo paths
+- it scores enrolled people deterministically
+- it returns `identified`, `unsure`, or `not_sure`
+- it preserves the existing API contract so the frontend can integrate now
 
 ## Core Architecture
 
@@ -114,6 +118,7 @@ Two areas are intentionally stubbed for future AI integration:
 ### 1. Install Dependencies
 
 ```bash
+cd server
 uv sync
 ```
 
@@ -157,45 +162,6 @@ The database schema has already been applied. It includes:
 ```bash
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
-
-### Production Mode
-
-```bash
-uv run uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-The API will be available at `http://localhost:8000`
-
-## API Documentation
-
-### Interactive Docs
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-### Health Check
-
-```bash
-curl http://localhost:8000/health
-# {"status":"ok"}
-```
-
-## API Endpoints
-
-All endpoints are prefixed with `/v1`
-
-### Authentication
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
-| POST | `/v1/auth/start` | Send verification code to email | No |
-| POST | `/v1/auth/verify` | Verify code and get auth token | No |
-| GET | `/v1/auth/me` | Get current caregiver profile | Yes |
-
-### Patients
-
-| Method | Endpoint | Description | Auth Required |
-|--------|----------|-------------|---------------|
 | GET | `/v1/patients` | List all patients for caregiver | Yes |
 | POST | `/v1/patients` | Create a new patient | Yes |
 | GET | `/v1/patients/{id}` | Get patient details | Yes |

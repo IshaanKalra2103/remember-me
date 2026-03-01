@@ -36,34 +36,16 @@ interface DashboardAction {
 
 export default function CaregiverDashboard() {
   const router = useRouter();
-  const { currentPatient, patients, signOut, currentPeople, isSignedIn, isLoading } = useApp();
+  const { currentPatient, patients, signOut, currentPeople, selectPatient } = useApp();
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Redirect to login if not signed in
-    if (!isLoading && !isSignedIn) {
-      router.replace('/login');
-      return;
-    }
-
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 400,
       useNativeDriver: true,
     }).start();
-  }, [isSignedIn, isLoading]);
-
-  if (isLoading || !isSignedIn) {
-    return (
-      <View style={styles.container}>
-        <SafeAreaView style={styles.safeArea}>
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ color: Colors.textSecondary }}>Loading...</Text>
-          </View>
-        </SafeAreaView>
-      </View>
-    );
-  }
+  }, []);
 
   const actions: DashboardAction[] = [
     {
@@ -99,7 +81,7 @@ export default function CaregiverDashboard() {
 
   const handleEnterPatientMode = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push({ pathname: '/patient-pin', params: { source: 'caregiver-dashboard' } });
+    router.push('/patient-pin');
   };
 
   const handleSignOut = () => {
@@ -114,6 +96,18 @@ export default function CaregiverDashboard() {
         },
       },
     ]);
+  };
+
+  const handleSwitchPatient = () => {
+    if (!currentPatient || patients.length <= 1) return;
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const currentIndex = patients.findIndex((patient) => patient.id === currentPatient.id);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % patients.length : 0;
+    const nextPatient = patients[nextIndex];
+    if (nextPatient) {
+      selectPatient(nextPatient.id);
+    }
   };
 
   return (
@@ -145,7 +139,12 @@ export default function CaregiverDashboard() {
                   <Text style={styles.patientName}>{currentPatient.name}</Text>
                 </View>
                 {patients.length > 1 && (
-                  <TouchableOpacity style={styles.switchButton}>
+                  <TouchableOpacity
+                    style={styles.switchButton}
+                    onPress={handleSwitchPatient}
+                    activeOpacity={0.8}
+                    testID="switch-patient"
+                  >
                     <RefreshCw size={16} color={Colors.accent} />
                     <Text style={styles.switchText}>Switch</Text>
                   </TouchableOpacity>

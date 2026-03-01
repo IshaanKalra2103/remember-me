@@ -10,6 +10,7 @@ import {
   Platform,
   Switch,
   KeyboardAvoidingView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Check, ChevronRight, User, Lock, Settings } from 'lucide-react-native';
@@ -17,20 +18,19 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import { Patient } from '@/types';
+import { setPatientPin } from '@/utils/backendApi';
 
 export default function AddPatientScreen() {
   const router = useRouter();
-  const { addPatient, setPin: savePin, updatePatient } = useApp();
+  const { addPatient } = useApp();
   const [step, setStep] = useState<number>(0);
   const [name, setName] = useState<string>('');
-  const [language, setLanguage] = useState<string>('en');
+  const [language, setLanguage] = useState<string>('English');
   const [pin, setPin] = useState<string>('');
   const [confirmPin, setConfirmPin] = useState<string>('');
   const [supervisionMode, setSupervisionMode] = useState<boolean>(true);
   const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
   const [pinError, setPinError] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [createdPatientId, setCreatedPatientId] = useState<string | null>(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const steps = [
@@ -63,26 +63,26 @@ export default function AddPatientScreen() {
     if (step < 2) {
       animateTransition(() => setStep(step + 1));
     } else {
-      setIsSubmitting(true);
+      const newPatientId = `patient-${Date.now()}`;
       try {
-        // Create patient
-        const newPatient = await addPatient({ name: name.trim(), language });
-        setCreatedPatientId(newPatient.id);
-
-        // Set PIN
-        await savePin(newPatient.id, pin);
-
-        // Update supervision mode and auto-play audio
-        await updatePatient(newPatient.id, { supervisionMode, autoPlayAudio });
-
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        animateTransition(() => setStep(3));
-      } catch (error: any) {
-        setPinError(error.message || 'Failed to create patient');
-        if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      } finally {
-        setIsSubmitting(false);
+        await setPatientPin(newPatientId, pin);
+      } catch (error) {
+        console.error('[AddPatient] Failed to store PIN locally:', error);
+        Alert.alert('Could not save PIN', 'Please try again.');
+        return;
       }
+
+      const newPatient: Patient = {
+        id: newPatientId,
+        name: name.trim(),
+        language,
+        supervisionMode,
+        autoPlayAudio,
+        createdAt: new Date().toISOString(),
+      };
+      addPatient(newPatient);
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      animateTransition(() => setStep(3));
     }
   };
 
@@ -278,16 +278,16 @@ export default function AddPatientScreen() {
         </Animated.View>
 
         <TouchableOpacity
-          style={[styles.primaryButton, (!canProceed() || isSubmitting) && styles.buttonDisabled]}
+          style={[styles.primaryButton, !canProceed() && styles.buttonDisabled]}
           onPress={handleNext}
-          disabled={!canProceed() || isSubmitting}
+          disabled={!canProceed()}
           activeOpacity={0.85}
           testID="next-button"
         >
           <Text style={styles.primaryButtonText}>
-            {isSubmitting ? 'Creating...' : step === 2 ? 'Create Patient' : 'Continue'}
+            {step === 2 ? 'Create Patient' : 'Continue'}
           </Text>
-          {!isSubmitting && <ChevronRight size={18} color={Colors.white} />}
+          <ChevronRight size={18} color={Colors.white} />
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>

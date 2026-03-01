@@ -21,15 +21,13 @@ import {
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
-import { audioApi } from '@/services/api';
 
 export default function PersonDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { people, removePerson, refresh } = useApp();
+  const { people, removePerson, updatePerson } = useApp();
   const person = people.find((p) => p.id === id);
   const [confirmDelete, setConfirmDelete] = useState<boolean>(false);
-  const [isGeneratingAnnouncement, setIsGeneratingAnnouncement] = useState<boolean>(false);
 
   if (!person) {
     return (
@@ -52,42 +50,23 @@ export default function PersonDetailsScreen() {
         {
           text: 'Remove',
           style: 'destructive',
-          onPress: async () => {
-            try {
-              await removePerson(person.id);
-              if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-              router.back();
-            } catch (err) {
-              Alert.alert('Error', 'Failed to remove person');
-            }
+          onPress: () => {
+            removePerson(person.id);
+            if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            router.back();
           },
         },
       ]
     );
   };
 
-  const handleGenerateAnnouncement = async () => {
+  const handleGenerateAnnouncement = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setIsGeneratingAnnouncement(true);
-    try {
-      const response = await audioApi.generateAnnouncement(person.id);
-      await refresh();
-      Alert.alert(
-        'Announcement Ready',
-        response.cached
-          ? 'Using cached announcement audio from backend.'
-          : 'Generated new announcement audio from backend.'
-      );
-    } catch (error: any) {
-      Alert.alert('Error', error?.message || 'Failed to generate announcement audio');
-    } finally {
-      setIsGeneratingAnnouncement(false);
-    }
+    updatePerson({ ...person, hasAnnouncement: true });
   };
 
-  const relationLabel = person.relationship
-    ? person.relationship.charAt(0).toUpperCase() + person.relationship.slice(1)
-    : 'Unknown';
+  const relationLabel =
+    person.relationship.charAt(0).toUpperCase() + person.relationship.slice(1);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -112,8 +91,8 @@ export default function PersonDetailsScreen() {
           </Text>
         </View>
         <View style={styles.photoGrid}>
-          {person.photos.map((photo) => (
-            <View key={photo.id} style={styles.photoItem}>
+          {person.photos.map((photo, index) => (
+            <View key={photo.id ?? index} style={styles.photoItem}>
               <Image source={{ uri: photo.url }} style={styles.photoImage} />
             </View>
           ))}
@@ -159,17 +138,16 @@ export default function PersonDetailsScreen() {
             </TouchableOpacity>
           </View>
         ) : (
-            <TouchableOpacity
-              style={styles.generateButton}
-              onPress={handleGenerateAnnouncement}
-              disabled={isGeneratingAnnouncement}
-              activeOpacity={0.85}
-            >
-              <Volume2 size={18} color={Colors.white} />
-              <Text style={styles.generateButtonText}>
-                {isGeneratingAnnouncement ? 'Generating...' : 'Create Announcement Audio'}
-              </Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.generateButton}
+            onPress={handleGenerateAnnouncement}
+            activeOpacity={0.85}
+          >
+            <Volume2 size={18} color={Colors.white} />
+            <Text style={styles.generateButtonText}>
+              Create Announcement Audio
+            </Text>
+          </TouchableOpacity>
         )}
       </View>
 

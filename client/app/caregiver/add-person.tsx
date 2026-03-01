@@ -32,7 +32,7 @@ import { relationships } from '@/mocks/data';
 
 export default function AddPersonScreen() {
   const router = useRouter();
-  const { addPerson, currentPatientId, uploadPhoto } = useApp();
+  const { addPerson, currentPatientId } = useApp();
   const [step, setStep] = useState<number>(0);
   const [name, setName] = useState<string>('');
   const [relationship, setRelationship] = useState<string>('');
@@ -41,8 +41,6 @@ export default function AddPersonScreen() {
   const [hasVoiceMessage, setHasVoiceMessage] = useState<boolean>(false);
   const [showRelPicker, setShowRelPicker] = useState<boolean>(false);
   const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [submitError, setSubmitError] = useState<string>('');
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const stepTitles = ['Identity', 'Photos', 'Voice', 'Review'];
@@ -58,7 +56,7 @@ export default function AddPersonScreen() {
   const handlePickPhoto = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaType.Images,
         allowsMultipleSelection: true,
         quality: 0.8,
       });
@@ -90,37 +88,29 @@ export default function AddPersonScreen() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!currentPatientId) return;
-
-    setIsSubmitting(true);
-    setSubmitError('');
-
-    try {
-      // Create the person first
-      const newPerson = await addPerson({
-        name: name.trim(),
-        relationship,
-        nickname: nickname.trim() || undefined,
-      });
-
-      // Upload photos in sequence
-      for (const photoUri of photos) {
-        try {
-          await uploadPhoto(newPerson.id, photoUri);
-        } catch (err) {
-          console.warn('Failed to upload photo:', err);
-        }
-      }
-
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      animateTransition(() => setStep(4));
-    } catch (err: any) {
-      setSubmitError(err.message || 'Failed to save person');
-      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsSubmitting(false);
-    }
+    const personId = `person-${Date.now()}`;
+    const person: Person = {
+      id: personId,
+      patientId: currentPatientId,
+      name: name.trim(),
+      relationship,
+      nickname: nickname.trim() || undefined,
+      photos: photos.map((uri, index) => ({
+        id: `${personId}-photo-${index}`,
+        personId,
+        storagePath: uri,
+        url: uri,
+        createdAt: new Date().toISOString(),
+      })),
+      hasVoiceMessage,
+      hasAnnouncement: false,
+      createdAt: new Date().toISOString(),
+    };
+    addPerson(person);
+    if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    animateTransition(() => setStep(4));
   };
 
   const toggleRecord = () => {
@@ -386,18 +376,18 @@ export default function AddPersonScreen() {
           <TouchableOpacity
             style={[
               styles.primaryButton,
-              (!canProceed() || isSubmitting) && styles.buttonDisabled,
+              !canProceed() && styles.buttonDisabled,
               step > 0 && { flex: 1 },
             ]}
             onPress={handleNext}
-            disabled={!canProceed() || isSubmitting}
+            disabled={!canProceed()}
             activeOpacity={0.85}
             testID="next-step"
           >
             <Text style={styles.primaryButtonText}>
-              {isSubmitting ? 'Saving...' : step === 3 ? 'Save Person' : 'Continue'}
+              {step === 3 ? 'Save Person' : 'Continue'}
             </Text>
-            {!isSubmitting && <ChevronRight size={18} color={Colors.white} />}
+            <ChevronRight size={18} color={Colors.white} />
           </TouchableOpacity>
         </View>
       </ScrollView>

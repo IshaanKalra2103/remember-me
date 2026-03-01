@@ -7,8 +7,15 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.134.0",
     "google-genai>=1.65.0",
+    "insightface>=0.7.3",
+    "numpy>=2.4.2",
+    "onnxruntime>=1.19.0",
     "openai>=2.24.0",
+    "opencv-python>=4.13.0.92",
+    "requests>=2.32.5",
     "python-dotenv>=1.2.1",
     "python-multipart>=0.0.22",
+    "sounddevice>=0.5.0",
+    "soundfile>=0.12.1",
     "supabase>=2.28.0",
 ]

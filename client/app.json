@@ -15,9 +15,13 @@
     },
     "ios": {
       "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "RememberMe uses the camera to recognize familiar faces."
+      },
       "bundleIdentifier": "app.rork.rememberme-app-ui"
     },
     "android": {
+      "permissions": ["CAMERA"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -34,11 +38,17 @@
           "origin": "https://rork.com/"
         }
       ],
+      "expo-camera",
       "expo-font",
       "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "EXPO_PUBLIC_PATIENT_ID": "35532ea5-2678-4cdd-ad97-7ec78675c87a",
+      "EXPO_PUBLIC_API_BASE_URL": "http://127.0.0.1:8000/v1",
+      "EXPO_PUBLIC_PATIENT_PIN": "1234"
     }
   }
 }

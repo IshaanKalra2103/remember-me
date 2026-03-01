@@ -16,9 +16,10 @@ import { useApp } from '@/providers/AppProvider';
 
 export default function PatientResultScreen() {
   const router = useRouter();
-  const { personId, confident, repeat } = useLocalSearchParams<{
+  const { personId, confident, confidenceBand, repeat } = useLocalSearchParams<{
     personId: string;
     confident?: string;
+    confidenceBand?: 'high' | 'medium' | 'low';
     repeat?: string;
   }>();
   const { people, preferences, addActivityLogEntry, currentPatientId } = useApp();
@@ -28,7 +29,9 @@ export default function PatientResultScreen() {
   const nameAnim = useRef(new Animated.Value(0)).current;
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [showConfirm, setShowConfirm] = useState<boolean>(false);
-  const isConfident = confident === 'true';
+  const resolvedConfidence =
+    confidenceBand ?? (confident === 'true' ? 'high' : confident === 'false' ? 'low' : 'medium');
+  const isConfident = resolvedConfidence === 'high';
 
   useEffect(() => {
     Animated.sequence([
@@ -217,10 +220,14 @@ export default function PatientResultScreen() {
                   <Text
                     style={[
                       styles.confidenceText,
-                      !isConfident && styles.confidenceTextLow,
+                      resolvedConfidence !== 'high' && styles.confidenceTextLow,
                     ]}
                   >
-                    {isConfident ? 'Confident' : 'Not sure'}
+                    {resolvedConfidence === 'high'
+                      ? 'Confident'
+                      : resolvedConfidence === 'medium'
+                        ? 'Needs confirmation'
+                        : 'Not sure'}
                   </Text>
                 </View>
               </View>

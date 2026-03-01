@@ -66,6 +66,17 @@ class PatientOut(CamelModel):
     created_at: datetime
 
 
+class PatientPublicOut(CamelModel):
+    id: uuid.UUID
+    caregiver_id: uuid.UUID
+    name: str
+    language: str
+    avatar_url: Optional[str] = None
+    supervision_mode: bool
+    auto_play_audio: bool
+    created_at: datetime
+
+
 # ── PIN ───────────────────────────────────────────────────────────────
 
 
@@ -155,12 +166,21 @@ class RecognitionCandidate(CamelModel):
     confidence: float
 
 
+class BoundingBox(CamelModel):
+    x: int
+    y: int
+    w: int
+    h: int
+
+
 class RecognitionResult(CamelModel):
     event_id: uuid.UUID
     status: str
     confidence_score: Optional[float] = None
     confidence_band: Optional[str] = None
     winner_person_id: Optional[uuid.UUID] = None
+    recognized_name: Optional[str] = None
+    primary_bbox: Optional[BoundingBox] = None
     candidates: list[RecognitionCandidate] = []
     needs_tie_break: bool = False
 

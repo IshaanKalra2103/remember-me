@@ -63,16 +63,14 @@ export default function PatientHomeScreen() {
 
   const handleHelp = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    router.push({ pathname: '/patient-not-sure', params: { handoff: 'true' } });
+    router.push('/patient-not-sure');
   };
 
   const handleSettings = () => {
-    router.push({ pathname: '/patient-pin', params: { next: 'caregiver', source: 'patient-home' } });
-  };
-
-  const handleBackToModeSelection = () => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/');
+    router.push({
+      pathname: '/patient-pin',
+      params: { next: '/caregiver/dashboard' },
+    });
   };
 
   return (
@@ -141,13 +139,6 @@ export default function PatientHomeScreen() {
                 <Text style={styles.secondaryButtonText}>Ask caregiver{'\n'}for help</Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={styles.modeBackLink}
-              onPress={handleBackToModeSelection}
-              testID="back-to-mode-selection"
-            >
-              <Text style={styles.modeBackLinkText}>Back to mode selection</Text>
-            </TouchableOpacity>
           </View>
         </Animated.View>
       </SafeAreaView>
@@ -247,17 +238,6 @@ const styles = StyleSheet.create({
   secondaryButtons: {
     flexDirection: 'row',
     gap: 12,
-  },
-  modeBackLink: {
-    marginTop: 6,
-    alignSelf: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-  },
-  modeBackLinkText: {
-    fontSize: 15,
-    color: Colors.textTertiary,
-    textDecorationLine: 'underline',
   },
   secondaryButton: {
     flex: 1,

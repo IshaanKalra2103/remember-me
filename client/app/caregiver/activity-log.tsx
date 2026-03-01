@@ -36,6 +36,9 @@ const getLogIcon = (type: ActivityLogEntry['type']) => {
 const getLogMessage = (entry: ActivityLogEntry): string => {
   switch (entry.type) {
     case 'identified':
+      if (typeof entry.confidence === 'number') {
+        return `Identified ${entry.personName ?? 'someone'} (${Math.round(entry.confidence * 100)}% confidence)`;
+      }
       return `Identified ${entry.personName ?? 'someone'}${entry.confidence === 'high' ? ' (High confidence)' : ' (Low confidence)'}`;
     case 'unsure':
       return 'Unsure, asked for help';
