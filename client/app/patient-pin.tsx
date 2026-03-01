@@ -8,11 +8,12 @@ import {
   Platform,
   Dimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Delete, Lock } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
+import MainLoader from '@/components/MainLoader';
 import { useApp } from '@/providers/AppProvider';
 import { verifyPatientPin } from '@/utils/backendApi';
 
@@ -21,11 +22,17 @@ const KEY_SIZE = Math.min((width - 120) / 3, 80);
 
 export default function PatientPinScreen() {
   const router = useRouter();
-  const { currentPatient } = useApp();
+  const params = useLocalSearchParams<{ next?: string }>();
+  const { currentPatient, isLoading } = useApp();
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const nextRoute =
+    typeof params.next === 'string' && params.next.startsWith('/')
+      ? params.next
+      : '/patient-home';
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -46,16 +53,22 @@ export default function PatientPinScreen() {
         return;
       }
 
-      const valid = await verifyPatientPin(currentPatient.id, pin);
-      if (valid) {
-        if (Platform.OS !== 'web')
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setTimeout(() => {
-          router.replace('/patient-home');
-        }, 200);
-      } else {
-        if (Platform.OS !== 'web')
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setIsVerifying(true);
+      try {
+        const valid = await verifyPatientPin(currentPatient.id, pin);
+        if (valid) {
+          if (Platform.OS !== 'web') {
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }
+          setTimeout(() => {
+            router.replace(nextRoute as never);
+          }, 200);
+          return;
+        }
+
+        if (Platform.OS !== 'web') {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
         setError("That didn't match. Try again.");
         Animated.sequence([
           Animated.timing(shakeAnim, { toValue: 10, duration: 50, useNativeDriver: true }),
@@ -64,31 +77,43 @@ export default function PatientPinScreen() {
           Animated.timing(shakeAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
         ]).start();
         setTimeout(() => setPin(''), 400);
+      } catch (error) {
+        console.error('[PatientPin] PIN verify failed:', error);
+        setError('Could not verify PIN. Please try again.');
+        setTimeout(() => setPin(''), 400);
+      } finally {
+        setIsVerifying(false);
       }
     };
 
-    runVerify().catch((error) => {
-      console.error('[PatientPin] PIN verify failed:', error);
-      setError('PIN verification failed.');
-      setTimeout(() => setPin(''), 400);
-    });
-  }, [currentPatient, pin, router, shakeAnim]);
+    void runVerify();
+  }, [currentPatient, pin, router, shakeAnim, nextRoute]);
 
   const handleKeyPress = (key: string) => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (pin.length < 4) {
-      setError('');
-      setPin(pin + key);
-    }
+    if (isVerifying) return;
+    setError('');
+    setPin((prev) => (prev.length < 4 ? `${prev}${key}` : prev));
   };
 
   const handleDelete = () => {
-    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPin(pin.slice(0, -1));
+    if (isVerifying) return;
+    setPin((prev) => prev.slice(0, -1));
     setError('');
   };
 
   const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'delete'];
+
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.content}>
+            <MainLoader size={120} />
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -121,6 +146,7 @@ export default function PatientPinScreen() {
             ))}
           </Animated.View>
 
+          {isVerifying && <Text style={styles.verifyingText}>Verifying...</Text>}
           {error !== '' && <Text style={styles.errorText}>{error}</Text>}
 
           <View style={styles.keypad}>
@@ -135,6 +161,7 @@ export default function PatientPinScreen() {
                     style={styles.key}
                     onPress={handleDelete}
                     activeOpacity={0.7}
+                    disabled={isVerifying}
                     testID="pin-delete"
                   >
                     <Delete size={24} color={Colors.text} />
@@ -147,6 +174,7 @@ export default function PatientPinScreen() {
                   style={styles.key}
                   onPress={() => handleKeyPress(key)}
                   activeOpacity={0.7}
+                  disabled={isVerifying}
                   testID={`pin-key-${key}`}
                 >
                   <Text style={styles.keyText}>{key}</Text>
@@ -158,6 +186,7 @@ export default function PatientPinScreen() {
           <TouchableOpacity
             style={styles.backLink}
             onPress={() => router.back()}
+            disabled={isVerifying}
           >
             <Text style={styles.backLinkText}>Back to home</Text>
           </TouchableOpacity>
@@ -225,6 +254,12 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 14,
     color: Colors.destructive,
+    marginBottom: 8,
+    fontWeight: '500' as const,
+  },
+  verifyingText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
     marginBottom: 8,
     fontWeight: '500' as const,
   },

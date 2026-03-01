@@ -23,7 +23,8 @@ export interface RecognitionApiResult {
 
 const getConfigValue = (key: string): string | undefined => {
   const expoExtra = (Constants.expoConfig?.extra ?? {}) as Record<string, string | undefined>;
-  return expoExtra[key] ?? process.env[key];
+  // Prefer EXPO_PUBLIC_* env vars so local/tunnel endpoints can override app.json defaults.
+  return process.env[key] ?? expoExtra[key];
 };
 
 export const getApiBaseUrl = () =>

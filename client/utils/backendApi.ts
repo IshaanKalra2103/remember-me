@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
 import { RecognitionPreferences, Patient, Person, ActivityLogEntry } from '@/types';
 import { getApiBaseUrl } from '@/utils/recognitionApi';
 
@@ -6,6 +8,32 @@ type PatientResponse = Patient;
 type PeopleResponse = Person[];
 
 type LogsResponse = ActivityLogEntry[];
+type PatientPinMap = Record<string, string>;
+
+const PATIENT_PINS_KEY = 'rememberme_patient_pins';
+
+const getConfigValue = (key: string): string | undefined => {
+  const expoExtra = (Constants.expoConfig?.extra ?? {}) as Record<string, string | undefined>;
+  return process.env[key] ?? expoExtra[key];
+};
+
+async function readPatientPins(): Promise<PatientPinMap> {
+  const stored = await AsyncStorage.getItem(PATIENT_PINS_KEY);
+  if (!stored) return {};
+  try {
+    const parsed = JSON.parse(stored) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as PatientPinMap;
+    }
+  } catch (error) {
+    console.warn('[backendApi] Failed to parse stored patient PINs:', error);
+  }
+  return {};
+}
+
+async function writePatientPins(pins: PatientPinMap) {
+  await AsyncStorage.setItem(PATIENT_PINS_KEY, JSON.stringify(pins));
+}
 
 export async function fetchPatient(patientId: string) {
   const response = await fetch(`${getApiBaseUrl()}/patient-mode/patients/${patientId}`);
@@ -62,16 +90,30 @@ export async function createLog(patientId: string, entry: Omit<ActivityLogEntry,
 }
 
 export async function verifyPatientPin(patientId: string, pin: string) {
-  const response = await fetch(`${getApiBaseUrl()}/patients/${patientId}/pin/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ pin }),
-  });
-
-  if (!response.ok) {
-    return false;
+  const pins = await readPatientPins();
+  const storedPin = pins[patientId];
+  if (storedPin) {
+    return storedPin === pin;
   }
 
-  const data = (await response.json()) as { valid: boolean };
-  return data.valid;
+  const configuredPatientId = getConfigValue('EXPO_PUBLIC_PATIENT_ID');
+  const configuredPin = getConfigValue('EXPO_PUBLIC_PATIENT_PIN');
+  if (
+    configuredPatientId === patientId &&
+    typeof configuredPin === 'string' &&
+    /^\d{4}$/.test(configuredPin)
+  ) {
+    return configuredPin === pin;
+  }
+
+  return false;
+}
+
+export async function setPatientPin(patientId: string, pin: string) {
+  if (!/^\d{4}$/.test(pin)) {
+    throw new Error('PIN must be exactly 4 digits.');
+  }
+  const pins = await readPatientPins();
+  pins[patientId] = pin;
+  await writePatientPins(pins);
 }

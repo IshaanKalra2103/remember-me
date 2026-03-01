@@ -48,7 +48,10 @@ export default function PatientNotSureScreen() {
 
   const handleReturnToPIN = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/patient-pin');
+    router.replace({
+      pathname: '/patient-pin',
+      params: { next: '/caregiver/dashboard' },
+    });
   };
 
   const handleGoBack = () => {

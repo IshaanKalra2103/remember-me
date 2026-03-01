@@ -67,7 +67,10 @@ export default function PatientHomeScreen() {
   };
 
   const handleSettings = () => {
-    router.push('/patient-pin');
+    router.push({
+      pathname: '/patient-pin',
+      params: { next: '/caregiver/dashboard' },
+    });
   };
 
   return (

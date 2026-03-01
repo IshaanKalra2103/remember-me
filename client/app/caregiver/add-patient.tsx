@@ -10,6 +10,7 @@ import {
   Platform,
   Switch,
   KeyboardAvoidingView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Check, ChevronRight, User, Lock, Settings } from 'lucide-react-native';
@@ -17,6 +18,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
 import { Patient } from '@/types';
+import { setPatientPin } from '@/utils/backendApi';
 
 export default function AddPatientScreen() {
   const router = useRouter();
@@ -45,7 +47,7 @@ export default function AddPatientScreen() {
     setTimeout(callback, 150);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (step === 1) {
       if (pin.length !== 4) {
@@ -61,11 +63,19 @@ export default function AddPatientScreen() {
     if (step < 2) {
       animateTransition(() => setStep(step + 1));
     } else {
+      const newPatientId = `patient-${Date.now()}`;
+      try {
+        await setPatientPin(newPatientId, pin);
+      } catch (error) {
+        console.error('[AddPatient] Failed to store PIN locally:', error);
+        Alert.alert('Could not save PIN', 'Please try again.');
+        return;
+      }
+
       const newPatient: Patient = {
-        id: `patient-${Date.now()}`,
+        id: newPatientId,
         name: name.trim(),
         language,
-        pin,
         supervisionMode,
         autoPlayAudio,
         createdAt: new Date().toISOString(),
