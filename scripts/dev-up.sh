@@ -5,6 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$ROOT_DIR/server"
 FRONTEND_DIR="$ROOT_DIR/client"
 BACKEND_URL="http://localhost:8000/health"
+BACKEND_PORT="8000"
+DEV_SESSION="henhacks-dev"
+BACKEND_WINDOW="backend"
+FRONTEND_WINDOW="frontend"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "Missing required command: uv"
@@ -21,29 +25,40 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-BACKEND_PID=""
-FRONTEND_PID=""
+if ! command -v tmux >/dev/null 2>&1; then
+  echo "Missing required command: tmux"
+  exit 1
+fi
 
-cleanup() {
-  local exit_code=$?
+if ! command -v lsof >/dev/null 2>&1; then
+  echo "Missing required command: lsof"
+  exit 1
+fi
 
-  if [[ -n "${FRONTEND_PID}" ]] && kill -0 "${FRONTEND_PID}" >/dev/null 2>&1; then
-    kill "${FRONTEND_PID}" >/dev/null 2>&1 || true
-  fi
-
-  if [[ -n "${BACKEND_PID}" ]] && kill -0 "${BACKEND_PID}" >/dev/null 2>&1; then
-    kill "${BACKEND_PID}" >/dev/null 2>&1 || true
-  fi
-
-  wait >/dev/null 2>&1 || true
-  exit "${exit_code}"
+session_exists() {
+  local name="$1"
+  tmux has-session -t "${name}" 2>/dev/null
 }
 
-trap cleanup EXIT INT TERM
+ensure_session_not_running() {
+  local name="$1"
+  if session_exists "${name}"; then
+    echo "tmux session '${name}' is already running."
+    echo "Run ./scripts/dev-down.sh first, or attach with: tmux attach -t ${name}"
+    exit 1
+  fi
+}
+
+if lsof -tiTCP:"${BACKEND_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port ${BACKEND_PORT} is already in use."
+  echo "Run ./scripts/dev-down.sh, or stop the process using that port and retry."
+  exit 1
+fi
+
+ensure_session_not_running "${DEV_SESSION}"
 
 echo "Starting backend at ${BACKEND_DIR}..."
-(cd "${BACKEND_DIR}" && uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000) &
-BACKEND_PID=$!
+tmux new-session -d -s "${DEV_SESSION}" -n "${BACKEND_WINDOW}" "cd '${BACKEND_DIR}' && uv run uvicorn main:app --reload --host 0.0.0.0 --port ${BACKEND_PORT}"
 
 echo "Waiting for backend health check..."
 for _ in $(seq 1 60); do
@@ -56,20 +71,26 @@ done
 
 if ! curl -fsS "${BACKEND_URL}" >/dev/null 2>&1; then
   echo "Backend did not become ready in time."
+  echo "Recent backend logs:"
+  tmux capture-pane -pt "${DEV_SESSION}:${BACKEND_WINDOW}" -S -25 2>/dev/null || true
   exit 1
 fi
 
 echo "Starting frontend web preview at ${FRONTEND_DIR}..."
-(cd "${FRONTEND_DIR}" && bun run start-web) &
-FRONTEND_PID=$!
+tmux new-window -t "${DEV_SESSION}:" -n "${FRONTEND_WINDOW}" "cd '${FRONTEND_DIR}' && bun run start-web"
 
 echo "Both services are running."
-echo "Frontend: check the URL printed by Expo in this terminal."
+echo "tmux session: ${DEV_SESSION}"
+echo "Windows: ${BACKEND_WINDOW}, ${FRONTEND_WINDOW}"
+echo "Attach: tmux attach -t ${DEV_SESSION}"
+echo "List sessions: tmux ls"
+echo "Stop both: ./scripts/dev-down.sh"
 echo "Backend docs: http://localhost:8000/docs"
-echo "Press Ctrl+C to stop both."
 
-while kill -0 "${BACKEND_PID}" >/dev/null 2>&1 && kill -0 "${FRONTEND_PID}" >/dev/null 2>&1; do
-  sleep 1
-done
+tmux select-window -t "${DEV_SESSION}:${FRONTEND_WINDOW}"
 
-echo "One of the services exited. Shutting down."
+if [[ -n "${TMUX:-}" ]]; then
+  tmux switch-client -t "${DEV_SESSION}"
+else
+  exec tmux attach -t "${DEV_SESSION}"
+fi

@@ -158,7 +158,9 @@ async def generate_announcement_audio(
     name = person.data["name"]
     relationship = person.data["relationship"] or "someone you know"
     text = f"This is {name}, your {relationship}"
-    text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+    # Include voice/model in the cache key so changing TTS voice invalidates old clips.
+    cache_key = f"{text}|voice={ELEVENLABS_VOICE_ID}|model={ELEVENLABS_MODEL_ID}"
+    text_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
 
     storage_path = f"{person_id}/{text_hash}.mp3"
 

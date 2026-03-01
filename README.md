@@ -6,9 +6,17 @@
 ./scripts/dev-up.sh
 ```
 
-This starts:
+This starts a `tmux` session and attaches you to it:
 - FastAPI backend on `http://localhost:8000`
 - Expo web frontend from `client/`
+
+Useful commands:
+
+```bash
+tmux ls
+tmux attach -t henhacks-dev
+./scripts/dev-down.sh
+```
 
 Backend docs:
 - `http://localhost:8000/docs`

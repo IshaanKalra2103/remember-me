@@ -99,7 +99,7 @@ export default function CaregiverDashboard() {
 
   const handleEnterPatientMode = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/patient-pin');
+    router.push({ pathname: '/patient-pin', params: { source: 'caregiver-dashboard' } });
   };
 
   const handleSignOut = () => {

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,7 @@ import {
   Animated,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RotateCcw, HandHelping, ArrowLeft, Heart } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +16,7 @@ import { useApp } from '@/providers/AppProvider';
 
 export default function PatientNotSureScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ handoff?: string }>();
   const { addActivityLogEntry, currentPatientId } = useApp();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [showHandoff, setShowHandoff] = React.useState<boolean>(false);
@@ -33,18 +34,25 @@ export default function PatientNotSureScreen() {
     router.replace('/patient-recognize');
   };
 
-  const handleAskHelp = () => {
+  const handleAskHelp = useCallback(() => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (currentPatientId) {
       addActivityLogEntry({
-        patientId: currentPatientId,
         type: 'help_requested',
+      }).catch((logErr) => {
+        console.warn('Failed to record help request:', logErr);
       });
     }
 
     setShowHandoff(true);
-  };
+  }, [addActivityLogEntry, currentPatientId]);
+
+  useEffect(() => {
+    if (params.handoff === 'true') {
+      handleAskHelp();
+    }
+  }, [params.handoff, handleAskHelp]);
 
   const handleReturnToPIN = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

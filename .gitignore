@@ -5,3 +5,12 @@
 # Other Files
 plan
 eleven_sandbox
+
+# Client ignore rules
+client/expo-env.d.ts
+client/.expo/
+client/node_modules/
+
+# Python cache artifacts
+__pycache__/
+*.py[cod]

@@ -61,7 +61,7 @@ export default function WelcomeScreen() {
 
   const handlePatient = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push('/patient-pin');
+    router.push({ pathname: '/patient-pin', params: { source: 'mode-selection' } });
   };
 
   const handlePrivacy = () => {

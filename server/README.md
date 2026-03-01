@@ -125,8 +125,8 @@ The `.env` file should include:
 SUPABASE_URL=https://lzuznpfxmqvxqtybycgb.supabase.co
 SUPABASE_KEY=<anon-key>
 ELEVENLABS_API_KEY=<your-elevenlabs-api-key>
-ELEVENLABS_VOICE_ID=<optional-voice-id>
-ELEVENLABS_MODEL_ID=<optional-model-id>
+ELEVENLABS_VOICE_ID=<optional-voice-id> # default: XrExE9yKIg1WjnnlVkGX
+ELEVENLABS_MODEL_ID=<optional-model-id> # default: eleven_flash_v2_5
 ```
 
 ### 3. Database

@@ -77,15 +77,30 @@ if [[ "${REGENERATE_FIRST_CALL}" == "true" ]]; then
   FIRST_URL="${FIRST_URL}?regenerate=true"
 fi
 
+post_json_with_error_details() {
+  local url="$1"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  local code
+  code="$(curl -sS -o "${tmp_file}" -w '%{http_code}' -X POST "${url}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json")"
+  if [[ "${code}" != "200" && "${code}" != "201" ]]; then
+    echo "Request failed (HTTP ${code}) for: ${url}"
+    echo "Response body:"
+    cat "${tmp_file}"
+    rm -f "${tmp_file}"
+    exit 1
+  fi
+  cat "${tmp_file}"
+  rm -f "${tmp_file}"
+}
+
 echo "Calling announcement endpoint (1st call, regenerate=${REGENERATE_FIRST_CALL})..."
-RESP1="$(curl -fsS -X POST "${FIRST_URL}" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json")"
+RESP1="$(post_json_with_error_details "${FIRST_URL}")"
 
 echo "Calling announcement endpoint (2nd call)..."
-RESP2="$(curl -fsS -X POST "${API_BASE_URL}/people/${PERSON_ID}/announcement-audio" \
-  -H "Authorization: Bearer ${TOKEN}" \
-  -H "Content-Type: application/json")"
+RESP2="$(post_json_with_error_details "${API_BASE_URL}/people/${PERSON_ID}/announcement-audio")"
 
 CACHED1="$(printf '%s' "${RESP1}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("cached"))')"
 CACHED2="$(printf '%s' "${RESP2}" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("cached"))')"

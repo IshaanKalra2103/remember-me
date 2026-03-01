@@ -8,7 +8,7 @@ import {
   Platform,
   Dimensions,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Delete, Lock } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -20,6 +20,7 @@ const KEY_SIZE = Math.min((width - 120) / 3, 80);
 
 export default function PatientPinScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ next?: string; source?: string }>();
   const { currentPatient, verifyPin, createSession } = useApp();
   const [pin, setPin] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -49,10 +50,14 @@ export default function PatientPinScreen() {
       const isValid = await verifyPin(currentPatient.id, pin);
       if (isValid) {
         if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Create a session for recognition
-        await createSession();
+        // Session creation should not block navigation after a valid PIN.
+        createSession().catch((sessionErr) => {
+          console.warn('Failed to create session:', sessionErr);
+        });
+
+        const nextScreen = params.next === 'caregiver' ? '/caregiver/dashboard' : '/patient-home';
         setTimeout(() => {
-          router.replace('/patient-home');
+          router.replace(nextScreen as never);
         }, 200);
       } else {
         showError();
@@ -159,9 +164,25 @@ export default function PatientPinScreen() {
 
           <TouchableOpacity
             style={styles.backLink}
-            onPress={() => router.back()}
+            onPress={() => {
+              if (params.source === 'patient-home') {
+                router.replace('/patient-home');
+                return;
+              }
+              if (params.source === 'caregiver-dashboard') {
+                router.replace('/caregiver/dashboard');
+                return;
+              }
+              router.replace('/');
+            }}
           >
-            <Text style={styles.backLinkText}>Back to home</Text>
+            <Text style={styles.backLinkText}>
+              {params.source === 'patient-home'
+                ? 'Back to patient mode'
+                : params.source === 'caregiver-dashboard'
+                  ? 'Back to caregiver'
+                  : 'Back to mode selection'}
+            </Text>
           </TouchableOpacity>
         </Animated.View>
       </SafeAreaView>
