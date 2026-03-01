@@ -9,6 +9,7 @@ RememberMe is a caregiver-guided recognition app that helps patients identify fa
 ├── client/   # Expo + React Native app
 ├── server/   # FastAPI backend + Supabase integration
 ├── plan/     # Planning artifacts (if any)
+├── 11-lab/   # Eleven Labs Audio component with API endpoint for data transition (not connected to app)
 └── README.md # This file
 ```
 
