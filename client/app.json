@@ -16,12 +16,16 @@
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "NSCameraUsageDescription": "RememberMe uses the camera to recognize familiar faces."
+        "NSCameraUsageDescription": "RememberMe uses the camera to recognize familiar faces.",
+        "NSMicrophoneUsageDescription": "RememberMe records conversations to help remember interactions."
       },
       "bundleIdentifier": "app.rork.rememberme-app-ui"
     },
     "android": {
-      "permissions": ["CAMERA"],
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -47,8 +51,7 @@
     },
     "extra": {
       "EXPO_PUBLIC_PATIENT_ID": "35532ea5-2678-4cdd-ad97-7ec78675c87a",
-      "EXPO_PUBLIC_API_BASE_URL": "http://127.0.0.1:8000/v1",
-      "EXPO_PUBLIC_PATIENT_PIN": "1234"
+      "EXPO_PUBLIC_API_BASE_URL": "https://heatable-encouragedly-izaiah.ngrok-free.dev/v1"
     }
   }
 }

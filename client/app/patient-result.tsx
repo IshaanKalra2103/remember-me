@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,10 +9,12 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { RotateCcw, XCircle, Volume2, Square, Check, X } from 'lucide-react-native';
+import { RotateCcw, XCircle, Volume2, Square, Check, X, Home } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
 import Colors from '@/constants/colors';
 import { useApp } from '@/providers/AppProvider';
+import { fetchAnnouncementAudio } from '@/utils/backendApi';
 
 export default function PatientResultScreen() {
   const router = useRouter();
@@ -29,9 +31,20 @@ export default function PatientResultScreen() {
   const nameAnim = useRef(new Animated.Value(0)).current;
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [showConfirm, setShowConfirm] = useState<boolean>(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
   const resolvedConfidence =
     confidenceBand ?? (confident === 'true' ? 'high' : confident === 'false' ? 'low' : 'medium');
   const isConfident = resolvedConfidence === 'high';
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (soundRef.current) {
+        soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     Animated.sequence([
@@ -59,6 +72,43 @@ export default function PatientResultScreen() {
     }
   }, []);
 
+  const playAudio = useCallback(async () => {
+    if (!personId) return;
+
+    try {
+      // Unload any previous sound
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+
+      const audioUrl = await fetchAnnouncementAudio(personId);
+      if (!audioUrl) {
+        // No audio available, just show visual feedback for a moment
+        setTimeout(() => setIsSpeaking(false), 2000);
+        return;
+      }
+
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: true }
+      );
+      soundRef.current = sound;
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setIsSpeaking(false);
+          sound.unloadAsync().catch(() => {});
+          soundRef.current = null;
+        }
+      });
+    } catch (error) {
+      console.warn('[PatientResult] Audio playback failed:', error);
+      setTimeout(() => setIsSpeaking(false), 2000);
+    }
+  }, [personId]);
+
   const startSpeaking = () => {
     setShowConfirm(false);
     setIsSpeaking(true);
@@ -72,9 +122,7 @@ export default function PatientResultScreen() {
       });
     }
 
-    setTimeout(() => {
-      setIsSpeaking(false);
-    }, 3000);
+    playAudio();
   };
 
   const handleRepeat = () => {
@@ -84,7 +132,7 @@ export default function PatientResultScreen() {
 
   const handleNotCorrect = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsSpeaking(false);
+    handleStop();
 
     if (currentPatientId) {
       addActivityLogEntry({
@@ -109,6 +157,17 @@ export default function PatientResultScreen() {
 
   const handleStop = () => {
     setIsSpeaking(false);
+    if (soundRef.current) {
+      soundRef.current.stopAsync().catch(() => {});
+      soundRef.current.unloadAsync().catch(() => {});
+      soundRef.current = null;
+    }
+  };
+
+  const handleGoHome = () => {
+    if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    handleStop();
+    router.replace('/patient-home');
   };
 
   if (!person) {
@@ -118,10 +177,11 @@ export default function PatientResultScreen() {
           <View style={styles.centerContent}>
             <Text style={styles.errorText}>Something went wrong</Text>
             <TouchableOpacity
-              style={styles.backButton}
+              style={styles.goHomeButton}
               onPress={() => router.replace('/patient-home')}
             >
-              <Text style={styles.backButtonText}>Go back</Text>
+              <Home size={28} color={Colors.white} />
+              <Text style={styles.goHomeButtonText}>Go Home</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -140,7 +200,7 @@ export default function PatientResultScreen() {
           {isSpeaking && (
             <View style={styles.speakingBadge}>
               <Volume2 size={16} color={Colors.accent} />
-              <Text style={styles.speakingText}>Speaking...</Text>
+              <Text style={styles.speakingText}>Playing announcement...</Text>
               <TouchableOpacity onPress={handleStop} style={styles.stopButton}>
                 <Square size={12} color={Colors.textSecondary} fill={Colors.textSecondary} />
               </TouchableOpacity>
@@ -235,26 +295,38 @@ export default function PatientResultScreen() {
           </View>
 
           {!showConfirm && (
-            <View style={styles.actionButtons}>
+            <View style={styles.bottomActions}>
               <TouchableOpacity
-                style={styles.repeatButton}
-                onPress={handleRepeat}
+                style={styles.goHomeButton}
+                onPress={handleGoHome}
                 activeOpacity={0.85}
-                testID="repeat-button"
+                testID="go-home-button"
               >
-                <RotateCcw size={22} color={Colors.accent} />
-                <Text style={styles.repeatButtonText}>Repeat</Text>
+                <Home size={28} color={Colors.white} />
+                <Text style={styles.goHomeButtonText}>Go Home</Text>
               </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.notCorrectButton}
-                onPress={handleNotCorrect}
-                activeOpacity={0.85}
-                testID="not-correct-button"
-              >
-                <XCircle size={22} color={Colors.destructive} />
-                <Text style={styles.notCorrectButtonText}>Not correct</Text>
-              </TouchableOpacity>
+              <View style={styles.actionButtons}>
+                <TouchableOpacity
+                  style={styles.repeatButton}
+                  onPress={handleRepeat}
+                  activeOpacity={0.85}
+                  testID="repeat-button"
+                >
+                  <RotateCcw size={22} color={Colors.accent} />
+                  <Text style={styles.repeatButtonText}>Repeat</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.notCorrectButton}
+                  onPress={handleNotCorrect}
+                  activeOpacity={0.85}
+                  testID="not-correct-button"
+                >
+                  <XCircle size={22} color={Colors.destructive} />
+                  <Text style={styles.notCorrectButtonText}>Not correct</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </Animated.View>
@@ -399,10 +471,31 @@ const styles = StyleSheet.create({
     fontWeight: '700' as const,
     color: Colors.destructive,
   },
+  bottomActions: {
+    gap: 12,
+    paddingBottom: 24,
+  },
+  goHomeButton: {
+    backgroundColor: Colors.accent,
+    borderRadius: 24,
+    paddingVertical: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 4,
+  },
+  goHomeButtonText: {
+    fontSize: 22,
+    fontWeight: '700' as const,
+    color: Colors.white,
+  },
   actionButtons: {
     flexDirection: 'row',
     gap: 12,
-    paddingBottom: 24,
   },
   repeatButton: {
     flex: 1,
@@ -438,14 +531,5 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: Colors.textSecondary,
     marginBottom: 20,
-  },
-  backButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: Colors.accent,
-    fontWeight: '600' as const,
   },
 });

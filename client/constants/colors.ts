@@ -12,6 +12,7 @@ export default {
   destructive: '#E07A5F',
   destructiveLight: '#FBF0ED',
   success: '#81B29A',
+  successLight: '#E8F5EE',
   warning: '#F2CC8F',
   white: '#FFFFFF',
   overlay: 'rgba(0,0,0,0.4)',

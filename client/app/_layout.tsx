@@ -26,7 +26,6 @@ function RootLayoutNav() {
     >
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="caregiver" options={{ headerShown: false }} />
-      <Stack.Screen name="patient-pin" options={{ headerShown: false, animation: 'slide_from_bottom' }} />
       <Stack.Screen name="patient-home" options={{ headerShown: false }} />
       <Stack.Screen name="patient-recognize" options={{ headerShown: false }} />
       <Stack.Screen name="patient-result" options={{ headerShown: false }} />

@@ -27,6 +27,7 @@ interface RequestOptions {
   body?: unknown;
   auth?: boolean;
   formData?: FormData;
+  timeout?: number;
 }
 
 class ApiError extends Error {
@@ -40,7 +41,7 @@ class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, formData } = options;
+  const { method = 'GET', body, auth = true, formData, timeout = 30000 } = options;
 
   const headers: Record<string, string> = {};
 
@@ -66,22 +67,36 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
     config.body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+  // Add timeout using AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  config.signal = controller.signal;
 
-  if (!response.ok) {
-    let detail = 'Request failed';
-    try {
-      const error = await response.json();
-      detail = error.detail || detail;
-    } catch {}
-    throw new ApiError(response.status, detail);
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let detail = 'Request failed';
+      try {
+        const error = await response.json();
+        detail = error.detail || detail;
+      } catch {}
+      throw new ApiError(response.status, detail);
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ApiError(408, 'Request timeout');
+    }
+    throw error;
   }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
-  return response.json();
 }
 
 // ─── Auth API ────────────────────────────────────────────────────────────────
@@ -123,9 +138,9 @@ export interface Patient {
   name: string;
   language: string;
   avatarUrl?: string;
-  pinHash?: string;
   supervisionMode: boolean;
   autoPlayAudio: boolean;
+  hasVoiceSample: boolean;
   createdAt: string;
 }
 
@@ -159,6 +174,11 @@ export interface Session {
   createdAt: string;
 }
 
+export interface VoiceSampleResponse {
+  success: boolean;
+  message: string;
+}
+
 export const patientsApi = {
   list: () => request<Patient[]>('/patients'),
 
@@ -169,19 +189,6 @@ export const patientsApi = {
 
   update: (id: string, data: PatientUpdate) =>
     request<Patient>(`/patients/${id}`, { method: 'PATCH', body: data }),
-
-  setPin: (id: string, pin: string) =>
-    request<{ message: string }>(`/patients/${id}/pin`, {
-      method: 'POST',
-      body: { pin },
-    }),
-
-  verifyPin: (id: string, pin: string) =>
-    request<{ valid: boolean }>(`/patients/${id}/pin/verify`, {
-      method: 'POST',
-      body: { pin },
-      auth: false,
-    }),
 
   getPreferences: (id: string) =>
     request<RecognitionPreferences>(`/patients/${id}/preferences`),
@@ -194,6 +201,50 @@ export const patientsApi = {
 
   createSession: (id: string) =>
     request<Session>(`/patients/${id}/sessions`, { method: 'POST' }),
+
+  uploadVoiceSample: async (id: string, uri: string, mimeType = 'audio/m4a') => {
+    console.log('[api] uploadVoiceSample URI:', uri);
+
+    const formData = new FormData();
+    // React Native FormData expects uri without modification
+    formData.append('file', {
+      uri: uri,
+      name: `voice-sample-${Date.now()}.m4a`,
+      type: mimeType,
+    } as unknown as Blob);
+
+    // Use direct fetch for file uploads to avoid potential issues with the request wrapper
+    const token = await getToken();
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+    try {
+      console.log('[api] Starting upload to:', `${API_BASE_URL}/patients/${id}/voice-sample`);
+      const response = await fetch(`${API_BASE_URL}/patients/${id}/voice-sample`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new ApiError(response.status, error.detail || 'Upload failed');
+      }
+
+      return response.json() as Promise<VoiceSampleResponse>;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      console.error('[api] Upload error:', error);
+      throw error;
+    }
+  },
 };
 
 // ─── People API ──────────────────────────────────────────────────────────────
