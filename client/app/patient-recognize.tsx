@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,47 +7,118 @@ import {
   Animated,
   Platform,
   Dimensions,
-  LayoutChangeEvent,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ArrowLeft, Scan, ShieldCheck, ShieldAlert } from 'lucide-react-native';
+import { ArrowLeft, Scan } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { Audio } from 'expo-av';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import Colors from '@/constants/colors';
+import RecognitionResultModal from '@/components/RecognitionResultModal';
 import { useApp } from '@/providers/AppProvider';
+import { Person } from '@/types';
 import {
   createRecognitionSession,
   getRecognitionPatientId,
   submitRecognitionFrame,
 } from '@/utils/recognitionApi';
+import { uploadMemory } from '@/utils/backendApi';
 
 const { height: screenHeight } = Dimensions.get('window');
 
-type BBox = { x: number; y: number; w: number; h: number };
-
-type OverlayBox = {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-};
-
 export default function PatientRecognizeScreen() {
   const router = useRouter();
-  const { currentPeople, addActivityLogEntry, currentPatientId, setLastRecognition } = useApp();
+  const { currentPeople, addActivityLogEntry, currentPatientId, setLastRecognition, preferences } = useApp();
   const [isIdentifying, setIsIdentifying] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [bbox, setBbox] = useState<OverlayBox | null>(null);
-  const [recognizedName, setRecognizedName] = useState<string | null>(null);
-  const [confidenceBand, setConfidenceBand] = useState<'high' | 'medium' | 'low' | null>(null);
   const [permission, requestPermission] = useCameraPermissions();
+  const [showResultModal, setShowResultModal] = useState<boolean>(false);
+  const [recognizedPerson, setRecognizedPerson] = useState<Person | null>(null);
+  const [resultConfidenceBand, setResultConfidenceBand] = useState<'high' | 'medium' | 'low'>('medium');
   const cameraRef = useRef<CameraView>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingMetaRef = useRef<{
+    patientId: string;
+    personId: string;
+    personName: string;
+  } | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(0.6)).current;
   const scanLineAnim = useRef(new Animated.Value(0)).current;
-  const previewLayout = useRef<{ width: number; height: number } | null>(null);
+
+  const stopRecording = useCallback(async (upload = true) => {
+    const recording = recordingRef.current;
+    const meta = recordingMetaRef.current;
+    recordingRef.current = null;
+    recordingMetaRef.current = null;
+
+    if (!recording) {
+      return;
+    }
+
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+
+      if (upload && uri && meta) {
+        await uploadMemory(meta.patientId, meta.personId, meta.personName, uri);
+      }
+    } catch (error) {
+      console.warn('[PatientRecognize] Failed to stop/upload recording:', error);
+    } finally {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+      }).catch(() => {});
+    }
+  }, []);
+
+  const startRecording = useCallback(
+    async (person: Person) => {
+      if (!currentPatientId) {
+        return;
+      }
+
+      try {
+        const permissionResult = await Audio.requestPermissionsAsync();
+        if (!permissionResult.granted) {
+          console.warn('[PatientRecognize] Microphone permission denied');
+          return;
+        }
+
+        await stopRecording(false);
+
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+          shouldDuckAndroid: true,
+          staysActiveInBackground: false,
+        });
+
+        const { recording } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+
+        recordingRef.current = recording;
+        recordingMetaRef.current = {
+          patientId: currentPatientId,
+          personId: person.id,
+          personName: person.name,
+        };
+      } catch (error) {
+        console.warn('[PatientRecognize] Failed to start recording:', error);
+      }
+    },
+    [currentPatientId, stopRecording]
+  );
+
+  useEffect(() => {
+    return () => {
+      void stopRecording(false);
+    };
+  }, [stopRecording]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -100,31 +171,6 @@ export default function PatientRecognizeScreen() {
     };
   }, [isIdentifying, pulseAnim, scanLineAnim]);
 
-  const getOverlayBox = (photoWidth: number, photoHeight: number, box: BBox) => {
-    const layout = previewLayout.current;
-    if (!layout) {
-      return null;
-    }
-
-    const scale = Math.max(layout.width / photoWidth, layout.height / photoHeight);
-    const displayWidth = photoWidth * scale;
-    const displayHeight = photoHeight * scale;
-    const offsetX = (layout.width - displayWidth) / 2;
-    const offsetY = (layout.height - displayHeight) / 2;
-
-    return {
-      left: box.x * scale + offsetX,
-      top: box.y * scale + offsetY,
-      width: box.w * scale,
-      height: box.h * scale,
-    };
-  };
-
-  const handleLayout = (event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-    previewLayout.current = { width, height };
-  };
-
   const handleIdentify = async () => {
     if (!currentPeople.length) {
       router.replace('/patient-not-sure');
@@ -145,9 +191,6 @@ export default function PatientRecognizeScreen() {
 
     setErrorMessage(null);
     setIsIdentifying(true);
-    setBbox(null);
-    setRecognizedName(null);
-    setConfidenceBand(null);
 
     try {
       const patientId = getRecognitionPatientId(currentPatientId);
@@ -158,7 +201,7 @@ export default function PatientRecognizeScreen() {
       const session = await createRecognitionSession(patientId);
       const photo = await cameraRef.current?.takePictureAsync({
         quality: 0.5,
-        skipProcessing: true,
+        shutterSound: false,
       });
 
       if (!photo?.uri || !photo.width || !photo.height) {
@@ -166,15 +209,6 @@ export default function PatientRecognizeScreen() {
       }
 
       const result = await submitRecognitionFrame(session.id, photo.uri);
-      const overlay = result.primaryBbox
-        ? getOverlayBox(photo.width, photo.height, result.primaryBbox)
-        : null;
-
-      if (overlay) {
-        setBbox(overlay);
-      }
-      setRecognizedName(result.recognizedName ?? null);
-      setConfidenceBand(result.confidenceBand ?? null);
 
       const topCandidate = result.candidates[0];
       const resolvedPerson =
@@ -198,7 +232,7 @@ export default function PatientRecognizeScreen() {
           });
         }
 
-        setTimeout(() => router.replace('/patient-not-sure'), 600);
+        router.replace('/patient-not-sure');
         return;
       }
 
@@ -214,15 +248,10 @@ export default function PatientRecognizeScreen() {
         });
       }
 
-      setTimeout(() => {
-        router.replace({
-          pathname: '/patient-result',
-          params: {
-            personId: resolvedPerson.id,
-            confidenceBand: result.confidenceBand ?? 'medium',
-          },
-        });
-      }, 600);
+      setRecognizedPerson(resolvedPerson);
+      setResultConfidenceBand(result.confidenceBand ?? 'medium');
+      setShowResultModal(true);
+      void startRecording(resolvedPerson);
     } catch (error) {
       console.error('[PatientRecognize] Recognition error:', error);
       setErrorMessage(error instanceof Error ? error.message : 'Recognition failed');
@@ -232,12 +261,41 @@ export default function PatientRecognizeScreen() {
     }
   };
 
-  const overlayColor = useMemo(() => {
-    if (confidenceBand === 'high') return '#2ecc71';
-    if (confidenceBand === 'medium') return '#f5c542';
-    if (confidenceBand === 'low') return '#f06265';
-    return 'rgba(255,255,255,0.5)';
-  }, [confidenceBand]);
+  const handleModalClose = () => {
+    setShowResultModal(false);
+    setRecognizedPerson(null);
+    router.replace('/patient-home');
+  };
+
+  const handleModalNotCorrect = () => {
+    if (currentPatientId && recognizedPerson) {
+      addActivityLogEntry({
+        patientId: currentPatientId,
+        type: 'not_correct',
+        personName: recognizedPerson.name,
+      });
+    }
+
+    setShowResultModal(false);
+    setRecognizedPerson(null);
+    router.replace('/patient-not-sure');
+  };
+
+  const handleAnnouncementPlayed = () => {
+    if (!currentPatientId) {
+      return;
+    }
+
+    addActivityLogEntry({
+      patientId: currentPatientId,
+      type: 'audio_played',
+      personName: recognizedPerson?.name,
+    });
+  };
+
+  const handleStopRecording = () => {
+    void stopRecording(true);
+  };
 
   if (!permission?.granted) {
     return (
@@ -261,12 +319,7 @@ export default function PatientRecognizeScreen() {
 
   return (
     <View style={styles.container}>
-      <CameraView
-        ref={cameraRef}
-        style={styles.camera}
-        facing="front"
-        onLayout={handleLayout}
-      />
+      <CameraView ref={cameraRef} style={styles.camera} facing="front" />
 
       <LinearGradient
         colors={['rgba(5,8,18,0.65)', 'rgba(5,8,18,0.1)', 'rgba(5,8,18,0.8)']}
@@ -279,42 +332,17 @@ export default function PatientRecognizeScreen() {
                 style={styles.backButton}
                 onPress={() => router.back()}
                 testID="recognize-back"
+                disabled={showResultModal}
               >
                 <ArrowLeft size={24} color={Colors.white} />
               </TouchableOpacity>
 
               <View style={styles.headerBadge}>
-                {confidenceBand === 'high' ? (
-                  <ShieldCheck size={16} color={overlayColor} />
-                ) : (
-                  <ShieldAlert size={16} color={overlayColor} />
-                )}
                 <Text style={styles.headerBadgeText}>Live Recognition</Text>
               </View>
             </View>
 
             <View style={styles.frameContainer}>
-              {bbox && (
-                <View
-                  style={[
-                    styles.boundingBox,
-                    {
-                      left: bbox.left,
-                      top: bbox.top,
-                      width: bbox.width,
-                      height: bbox.height,
-                      borderColor: overlayColor,
-                    },
-                  ]}
-                >
-                  {recognizedName && (
-                    <View style={[styles.namePill, { borderColor: overlayColor }]}> 
-                      <Text style={styles.nameText}>{recognizedName}</Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
               {isIdentifying && (
                 <Animated.View
                   style={[
@@ -351,6 +379,7 @@ export default function PatientRecognizeScreen() {
                     style={styles.identifyButton}
                     onPress={handleIdentify}
                     activeOpacity={0.85}
+                    disabled={showResultModal}
                     testID="identify-button"
                   >
                     <Scan size={28} color={Colors.white} />
@@ -362,6 +391,17 @@ export default function PatientRecognizeScreen() {
           </Animated.View>
         </SafeAreaView>
       </LinearGradient>
+
+      <RecognitionResultModal
+        visible={showResultModal}
+        person={recognizedPerson}
+        confidenceBand={resultConfidenceBand}
+        preferences={preferences}
+        onClose={handleModalClose}
+        onRepeat={handleAnnouncementPlayed}
+        onNotCorrect={handleModalNotCorrect}
+        onStopRecording={handleStopRecording}
+      />
     </View>
   );
 }
@@ -417,30 +457,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginVertical: 20,
     position: 'relative',
-  },
-  boundingBox: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderRadius: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-  },
-  namePill: {
-    position: 'absolute',
-    top: -30,
-    left: 0,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: 'rgba(5,8,18,0.8)',
-    borderWidth: 1,
-  },
-  nameText: {
-    color: Colors.white,
-    fontSize: 14,
-    fontWeight: '600' as const,
   },
   scanLine: {
     position: 'absolute',

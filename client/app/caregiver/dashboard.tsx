@@ -21,6 +21,7 @@ import {
   LogOut,
   Heart,
   RefreshCw,
+  Mic,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -55,6 +56,12 @@ export default function CaregiverDashboard() {
       route: '/caregiver/add-patient',
     },
     {
+      icon: <Mic size={22} color={Colors.accent} />,
+      title: 'Record Voice Sample',
+      description: currentPatient?.hasVoiceSample ? 'Voice sample recorded' : 'Required for speaker identification',
+      route: '/caregiver/voice-sample',
+    },
+    {
       icon: <Users size={22} color={Colors.accent} />,
       title: 'Manage People',
       description: `${currentPeople.length} people added`,
@@ -81,7 +88,7 @@ export default function CaregiverDashboard() {
 
   const handleEnterPatientMode = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/patient-pin');
+    router.push('/patient-home');
   };
 
   const handleSignOut = () => {

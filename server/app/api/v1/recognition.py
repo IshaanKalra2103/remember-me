@@ -1,15 +1,23 @@
+import contextlib
 import hashlib
+import io
+import os
+import sys
 import uuid
+from datetime import datetime
 from math import sqrt
 from typing import Optional
 
 import cv2
-import insightface
 import numpy as np
-import onnxruntime
 import requests
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from app.gemini_service import (
+    PersonContext,
+    generate_whisper_for_match,
+    generate_whisper_for_unknown,
+)
 from app.models import (
     BoundingBox,
     RecognitionCandidate,
@@ -18,6 +26,10 @@ from app.models import (
     TiebreakRequest,
 )
 from app.supabase_client import supabase
+from app.tts_service import text_to_speech
+
+OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", "output.txt")
+OUTPUT_AUDIO = os.path.join(os.path.dirname(__file__), "..", "..", "..", "output.mp3")
 
 router = APIRouter(prefix="/sessions", tags=["recognition"])
 
@@ -27,21 +39,32 @@ MEDIUM_CONFIDENCE_SIMILARITY = 0.45
 
 PHOTO_EMBEDDING_CACHE: dict[str, np.ndarray] = {}
 
-_available_providers = set(onnxruntime.get_available_providers())
-_preferred_providers = [
-    "CUDAExecutionProvider",
-    "CoreMLExecutionProvider",
-    "CPUExecutionProvider",
-]
-_selected_providers = [
-    provider for provider in _preferred_providers if provider in _available_providers
-] or ["CPUExecutionProvider"]
 
-FACE_APP = insightface.app.FaceAnalysis(
-    name="buffalo_l",
-    providers=_selected_providers,
-)
-FACE_APP.prepare(ctx_id=0, det_size=(640, 640))
+def _init_face_app():
+    """Initialize insightface with suppressed output."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        import insightface
+        import onnxruntime
+
+        _available_providers = set(onnxruntime.get_available_providers())
+        _preferred_providers = [
+            "CUDAExecutionProvider",
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
+        _selected_providers = [
+            provider for provider in _preferred_providers if provider in _available_providers
+        ] or ["CPUExecutionProvider"]
+
+        app = insightface.app.FaceAnalysis(
+            name="buffalo_l",
+            providers=_selected_providers,
+        )
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        return app
+
+
+FACE_APP = _init_face_app()
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -195,6 +218,7 @@ async def submit_frame(
             )
             .execute()
         )
+        await _write_whisper("not_sure", None, None)
         return RecognitionResult(
             event_id=event.data[0]["id"],
             status="not_sure",
@@ -225,6 +249,7 @@ async def submit_frame(
             )
             .execute()
         )
+        await _write_whisper("not_sure", None, None)
         return RecognitionResult(
             event_id=event.data[0]["id"],
             status="not_sure",
@@ -348,6 +373,9 @@ async def submit_frame(
     x1, y1, x2, y2 = [int(value) for value in primary_face.bbox]
     bbox = BoundingBox(x=x1, y=y1, w=max(0, x2 - x1), h=max(0, y2 - y1))
 
+    # Generate Gemini whisper and write to output.txt
+    await _write_whisper(status, winner_id, top.name)
+
     return RecognitionResult(
         event_id=event.data[0]["id"],
         status=status,
@@ -359,6 +387,80 @@ async def submit_frame(
         candidates=candidates,
         needs_tie_break=needs_tie_break,
     )
+
+
+async def _write_whisper(status: str, person_id: str | None, name: str | None) -> None:
+    """Generate a Gemini whisper and write it to output.txt. Never raises."""
+    try:
+        if status == "identified" and person_id:
+            # Fetch person — select only guaranteed columns, then try extras
+            try:
+                person_row = (
+                    supabase.table("people")
+                    .select("name, relationship, bio, topics_to_avoid")
+                    .eq("id", person_id)
+                    .maybe_single()
+                    .execute()
+                )
+                person_data = person_row.data or {}
+            except Exception:
+                # bio/topics_to_avoid columns may not exist yet — fall back
+                person_row = (
+                    supabase.table("people")
+                    .select("name, relationship")
+                    .eq("id", person_id)
+                    .maybe_single()
+                    .execute()
+                )
+                person_data = person_row.data or {}
+
+            if not person_data:
+                whisper = await generate_whisper_for_unknown()
+            else:
+                try:
+                    memories_row = (
+                        supabase.table("memories")
+                        .select("summary, created_at")
+                        .eq("person_id", person_id)
+                        .order("created_at", desc=True)
+                        .limit(3)
+                        .execute()
+                    )
+                    recent = [
+                        m["summary"]
+                        for m in (memories_row.data or [])
+                        if m.get("summary")
+                    ]
+                except Exception:
+                    recent = []
+
+                avoid = person_data.get("topics_to_avoid") or []
+                person_ctx = PersonContext(
+                    name=person_data.get("name") or name or "them",
+                    relationship=person_data.get("relationship") or "visitor",
+                    bio=person_data.get("bio") or "",
+                    recent_memories=recent,
+                    topics_to_avoid=avoid if isinstance(avoid, list) else [],
+                )
+                whisper = await generate_whisper_for_match(person_ctx)
+        else:
+            whisper = await generate_whisper_for_unknown()
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(OUTPUT_FILE, "w") as f:
+            f.write(f"[{timestamp}] {whisper}\n")
+        print(f"[WHISPER] {whisper}")
+
+        # Convert whisper to audio via ElevenLabs TTS
+        audio_bytes = text_to_speech(whisper)
+        if audio_bytes:
+            with open(OUTPUT_AUDIO, "wb") as f:
+                f.write(audio_bytes)
+            print(f"[TTS] Audio written to output.mp3 ({len(audio_bytes)} bytes)")
+        else:
+            print("[TTS] Audio generation skipped (no API key or error)")
+    except Exception as e:
+        print(f"[WHISPER ERROR] {e}")
 
 
 @router.post("/{session_id}/tiebreak", response_model=RecognitionResult)

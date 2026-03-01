@@ -1,21 +1,21 @@
-import hashlib
 import secrets
 
 from fastapi import Header, HTTPException
 
 from app.supabase_client import supabase
 
-
-def hash_pin(pin: str) -> str:
-    return hashlib.sha256(pin.encode()).hexdigest()
-
-
-def verify_pin(pin: str, pin_hash: str) -> bool:
-    return hash_pin(pin) == pin_hash
-
-
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+async def get_optional_caregiver(authorization: str | None = Header(default=None)):
+    """Return the caregiver dict if a valid token is present, otherwise None."""
+    if not authorization:
+        return None
+    try:
+        return await get_current_caregiver(authorization=authorization)
+    except HTTPException:
+        return None
 
 
 async def get_current_caregiver(authorization: str = Header()):

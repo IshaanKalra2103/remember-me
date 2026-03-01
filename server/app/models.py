@@ -60,9 +60,9 @@ class PatientOut(CamelModel):
     name: str
     language: str
     avatar_url: Optional[str] = None
-    pin_hash: Optional[str] = None
     supervision_mode: bool
     auto_play_audio: bool
+    has_voice_sample: bool = False
     created_at: datetime
 
 
@@ -74,22 +74,13 @@ class PatientPublicOut(CamelModel):
     avatar_url: Optional[str] = None
     supervision_mode: bool
     auto_play_audio: bool
+    has_voice_sample: bool = False
     created_at: datetime
 
 
-# ── PIN ───────────────────────────────────────────────────────────────
-
-
-class PinSetRequest(CamelModel):
-    pin: str
-
-
-class PinVerifyRequest(CamelModel):
-    pin: str
-
-
-class PinVerifyResponse(CamelModel):
-    valid: bool
+class VoiceSampleResponse(CamelModel):
+    success: bool
+    message: str
 
 
 # ── Preferences ───────────────────────────────────────────────────────
@@ -227,3 +218,43 @@ class ActivityLogOut(CamelModel):
     confidence: Optional[float] = None
     note: Optional[str] = None
     timestamp: datetime
+
+
+# ── ElevenLabs Memory Agent ───────────────────────────────────────────
+
+
+class MemoryAgentConfigResponse(CamelModel):
+    patient_id: uuid.UUID
+    agent_id: str
+    websocket_url: str
+    signed_url: Optional[str] = None
+    conversation_token: Optional[str] = None
+    warnings: Optional[list[str]] = None
+    person_name: Optional[str] = None
+    context_text: str
+    memories_count: int
+
+
+class NameBridgeState(CamelModel):
+    name: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class NameBridgeValue(CamelModel):
+    name: Optional[str] = None
+
+
+class NameBridgeSetRequest(CamelModel):
+    name: str
+
+
+class NameBridgeCommandRequest(CamelModel):
+    command: str
+    name: Optional[str] = None
+
+
+class NameBridgeCommandResponse(CamelModel):
+    accepted: bool
+    reason: Optional[str] = None
+    name: Optional[str] = None
+    updated_at: Optional[str] = None

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
@@ -264,35 +264,55 @@ export const [AppProvider, useApp] = createContextHook(() => {
     [people, saveMutation]
   );
 
+  const pendingLogSync = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLogEntries = useRef<{ localId: string; patientId: string; entry: Omit<ActivityLogEntry, 'id' | 'timestamp'> }[]>([]);
+
+  const flushLogSync = useCallback(() => {
+    const entries = pendingLogEntries.current.splice(0);
+    if (!entries.length) return;
+
+    entries.forEach(({ localId, patientId, entry }) => {
+      createLog(patientId, entry)
+        .then((saved) => {
+          setActivityLog((prev) => {
+            const filtered = prev.filter((log) => log.id !== localId);
+            return [saved, ...filtered];
+          });
+        })
+        .catch((error) => {
+          console.warn('[AppProvider] Failed to sync log:', error);
+        });
+    });
+  }, []);
+
   const addActivityLogEntry = useCallback(
     (entry: Omit<ActivityLogEntry, 'id' | 'timestamp'>) => {
       const newEntry: ActivityLogEntry = {
         ...entry,
-        id: `log-${Date.now()}`,
+        id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         timestamp: new Date().toISOString(),
       };
-      const updated = [newEntry, ...activityLog];
-      setActivityLog(updated);
-      saveMutation.mutate({ [STORAGE_KEYS.activityLog]: JSON.stringify(updated) });
+      setActivityLog((prev) => {
+        const updated = [newEntry, ...prev];
+        saveMutation.mutate({ [STORAGE_KEYS.activityLog]: JSON.stringify(updated) });
+        return updated;
+      });
 
       if (currentPatientId) {
-        createLog(currentPatientId, entry)
-          .then((saved) => {
-            setActivityLog((prev) => {
-              const filtered = prev.filter((log) => log.id !== newEntry.id);
-              const merged = [saved, ...filtered];
-              saveMutation.mutate({
-                [STORAGE_KEYS.activityLog]: JSON.stringify(merged),
-              });
-              return merged;
-            });
-          })
-          .catch((error) => {
-            console.warn('[AppProvider] Failed to sync log:', error);
-          });
+        pendingLogEntries.current.push({
+          localId: newEntry.id,
+          patientId: currentPatientId,
+          entry,
+        });
+
+        // Debounce backend sync to batch rapid log entries
+        if (pendingLogSync.current) {
+          clearTimeout(pendingLogSync.current);
+        }
+        pendingLogSync.current = setTimeout(flushLogSync, 500);
       }
     },
-    [activityLog, currentPatientId, saveMutation]
+    [currentPatientId, saveMutation, flushLogSync]
   );
 
   const updatePreferences = useCallback(
@@ -313,6 +333,10 @@ export const [AppProvider, useApp] = createContextHook(() => {
     },
     [saveMutation]
   );
+
+  const refreshPatients = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['appData'] });
+  }, [queryClient]);
 
   return {
     patients,
@@ -340,5 +364,6 @@ export const [AppProvider, useApp] = createContextHook(() => {
     addActivityLogEntry,
     updatePreferences,
     setLastRecognition,
+    refreshPatients,
   };
 });

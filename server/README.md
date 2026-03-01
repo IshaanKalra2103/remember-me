@@ -69,9 +69,15 @@ server/
 ```
 SUPABASE_URL=https://<your>.supabase.co
 SUPABASE_KEY=<service-or-anon-key>
+OPENAI_API_KEY=<your-openai-api-key>
+OPENAI_TRANSCRIBE_MODEL=<optional-model-id> # default: gpt-4o-transcribe-diarize
 ELEVENLABS_API_KEY=<your-elevenlabs-api-key>
 ELEVENLABS_VOICE_ID=<optional-voice-id>      # default: XrExE9yKIg1WjnnlVkGX
 ELEVENLABS_MODEL_ID=<optional-model-id>      # default: eleven_flash_v2_5
+GEMINI_API_KEY=<your-gemini-api-key>
+GEMINI_MODEL=<optional-model-id>             # default: gemini-2.5-flash-lite
+GEMINI_FALLBACK_MODELS=<comma-separated>     # default: gemini-2.5-flash
+GEMINI_IMAGE_MODEL=<optional-model-id>       # default: imagen-4.0-generate-001
 ```
 
 ## Setup and Run
@@ -80,6 +86,10 @@ cd server
 uv sync
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+## Supabase Setup
+- Run [`server/sql/migrations/20260301_remove_pin_add_memories.sql`](server/sql/migrations/20260301_remove_pin_add_memories.sql).
+- Create a storage bucket named `memory-audio` for uploaded conversation clips.
 
 ## API Summary
 
@@ -93,8 +103,6 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `POST /v1/patients`
 - `GET /v1/patients/{id}`
 - `PATCH /v1/patients/{id}`
-- `POST /v1/patients/{id}/pin`
-- `POST /v1/patients/{id}/pin/verify` (no auth)
 - `GET /v1/patients/{id}/preferences`
 - `PATCH /v1/patients/{id}/preferences`
 - `POST /v1/patients/{id}/sessions` (patient mode uses this unauthenticated)
@@ -127,9 +135,9 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 - `GET /v1/patient-mode/patients/{id}/preferences`
 - `GET /v1/patient-mode/patients/{id}/logs`
 - `POST /v1/patient-mode/patients/{id}/logs`
+- `POST /v1/patient-mode/patients/{id}/memories`
 
 ## Development Notes
-- PINs are hashed with SHA-256 (consider bcrypt/Argon2 for production)
 - CORS is permissive in development (lock down in production)
 - Recognition is functional but still a baseline pipeline; improve matching thresholds and performance as needed
 

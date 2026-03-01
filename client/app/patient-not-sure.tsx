@@ -39,9 +39,8 @@ export default function PatientNotSureScreen() {
 
     if (currentPatientId) {
       addActivityLogEntry({
+        patientId: currentPatientId,
         type: 'help_requested',
-      }).catch((logErr) => {
-        console.warn('Failed to record help request:', logErr);
       });
     }
 
@@ -54,12 +53,9 @@ export default function PatientNotSureScreen() {
     }
   }, [params.handoff, handleAskHelp]);
 
-  const handleReturnToPIN = () => {
+  const handleReturnToDashboard = () => {
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace({
-      pathname: '/patient-pin',
-      params: { next: '/caregiver/dashboard' },
-    });
+    router.replace('/caregiver/dashboard');
   };
 
   const handleGoBack = () => {
@@ -80,12 +76,12 @@ export default function PatientNotSureScreen() {
             <Text style={styles.handoffSubtext}>They can help from here</Text>
             <TouchableOpacity
               style={styles.returnButton}
-              onPress={handleReturnToPIN}
+              onPress={handleReturnToDashboard}
               activeOpacity={0.85}
-              testID="return-to-pin"
+              testID="return-to-dashboard"
             >
               <ArrowLeft size={20} color={Colors.white} />
-              <Text style={styles.returnButtonText}>Return to PIN Screen</Text>
+              <Text style={styles.returnButtonText}>Return to Dashboard</Text>
             </TouchableOpacity>
           </Animated.View>
         </SafeAreaView>
@@ -101,8 +97,8 @@ export default function PatientNotSureScreen() {
             <View style={styles.iconContainer}>
               <Heart size={32} color={Colors.accent} />
             </View>
-            <Text style={styles.title}>I'm not sure{'\n'}who this is</Text>
-            <Text style={styles.subtitle}>That's okay. Let's try again.</Text>
+            <Text style={styles.title}>{"I'm not sure"}{'\n'}who this is</Text>
+            <Text style={styles.subtitle}>{"That's okay. Let's try again."}</Text>
           </View>
 
           <View style={styles.buttonsContainer}>
